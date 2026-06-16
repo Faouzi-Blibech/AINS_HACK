@@ -1,0 +1,2 @@
+# Synthetic failure scenarios go here.
+# Each scenario: a seeded run + a known injected fault + the expected root cause.
