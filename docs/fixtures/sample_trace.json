@@ -1,0 +1,69 @@
+{
+  "schema_version": "1.0",
+  "run_id": "run-fixture-001",
+  "agent": "jira_triage_agent",
+  "created_at_ms": 1750240000000,
+  "mode": "record",
+  "parent_run_id": null,
+  "fork_step_id": null,
+  "status": "error",
+  "duration_ms": 1540,
+  "steps": [
+    {
+      "step_id": 1,
+      "type": "llm_call",
+      "model": "claude-opus-4-5",
+      "prompt_blob": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "response_blob": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "timestamp_ms": 1750240000000,
+      "latency_ms": 820,
+      "token_usage": { "prompt": 1150, "completion": 312 },
+      "confidence": 0.88,
+      "side_effecting": false,
+      "causal_parents": [],
+      "status": "ok"
+    },
+    {
+      "step_id": 2,
+      "type": "tool_call",
+      "tool": "get_priority",
+      "transport": "http",
+      "args_blob": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "result_blob": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "timestamp_ms": 1750240000825,
+      "latency_ms": 180,
+      "side_effecting": false,
+      "causal_parents": [1],
+      "status": "ok",
+      "confidence": null
+    },
+    {
+      "step_id": 3,
+      "type": "tool_call",
+      "tool": "assign_ticket",
+      "transport": "mcp",
+      "args_blob": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "result_blob": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "timestamp_ms": 1750240001010,
+      "latency_ms": 295,
+      "side_effecting": true,
+      "causal_parents": [1, 2],
+      "status": "ok",
+      "confidence": null
+    },
+    {
+      "step_id": 4,
+      "type": "tool_call",
+      "tool": "send_email",
+      "transport": "sdk",
+      "args_blob": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "result_blob": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "timestamp_ms": 1750240001310,
+      "latency_ms": 230,
+      "side_effecting": true,
+      "causal_parents": [3],
+      "status": "error",
+      "confidence": null
+    }
+  ]
+}

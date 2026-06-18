@@ -12,14 +12,16 @@ from __future__ import annotations
 import hashlib
 import os
 
-BLOB_DIR = os.environ.get("CASSETTE_BLOB_DIR", "./blobs")
-os.makedirs(BLOB_DIR, exist_ok=True)
+def _get_blob_dir() -> str:
+    d = os.environ.get("CASSETTE_BLOB_DIR", "./blobs")
+    os.makedirs(d, exist_ok=True)
+    return d
 
 
 def store_blob(content: str) -> str:
     """Store content and return its sha256:... reference."""
     h = hashlib.sha256(content.encode()).hexdigest()
-    path = os.path.join(BLOB_DIR, h)
+    path = os.path.join(_get_blob_dir(), h)
     if not os.path.exists(path):
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
@@ -29,5 +31,5 @@ def store_blob(content: str) -> str:
 def fetch_blob(ref: str) -> str:
     """Resolve a sha256:... reference back to its raw content."""
     h = ref.replace("sha256:", "")
-    with open(os.path.join(BLOB_DIR, h), encoding="utf-8") as f:
+    with open(os.path.join(_get_blob_dir(), h), encoding="utf-8") as f:
         return f.read()
