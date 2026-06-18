@@ -12,12 +12,15 @@
     {
       "step_id": 1,
       "type": "llm_call",
-      "model": "claude-opus-4-5",
-      "prompt_blob": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "response_blob": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "model": "claude-opus-4-8",
+      "prompt_blob": "sha256:9ba79d451fa42c006dfeb1701a541a980102beb578cea5a342e094feefc6d9af",
+      "response_blob": "sha256:6989e5ad668feaae451d0f94ee29278ff39a47a12768b74999289c029a6db9d5",
       "timestamp_ms": 1750240000000,
       "latency_ms": 820,
-      "token_usage": { "prompt": 1150, "completion": 312 },
+      "token_usage": {
+        "prompt": 1150,
+        "completion": 312
+      },
       "confidence": 0.88,
       "side_effecting": false,
       "causal_parents": [],
@@ -28,12 +31,14 @@
       "type": "tool_call",
       "tool": "get_priority",
       "transport": "http",
-      "args_blob": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-      "result_blob": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "args_blob": "sha256:6ccf67662e73ed737c2965abe2c3f845d607ed83ef9b093c4984d0c3c9b541e7",
+      "result_blob": "sha256:3c34e3763cf9d4cddd9e759c33ff6de8fa9e6a27be4564f78a1565403fbe8ae8",
       "timestamp_ms": 1750240000825,
       "latency_ms": 180,
       "side_effecting": false,
-      "causal_parents": [1],
+      "causal_parents": [
+        1
+      ],
       "status": "ok",
       "confidence": null
     },
@@ -41,13 +46,16 @@
       "step_id": 3,
       "type": "tool_call",
       "tool": "assign_ticket",
-      "transport": "mcp",
-      "args_blob": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-      "result_blob": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "transport": "http",
+      "args_blob": "sha256:6eb29313615abf50049844c2a4e804ac431ee888800b7358c497e4b11f51b816",
+      "result_blob": "sha256:58d9455c766b700ebd5f2b14fadde37f2377f33316be8eba7217cb24b0e10924",
       "timestamp_ms": 1750240001010,
       "latency_ms": 295,
       "side_effecting": true,
-      "causal_parents": [1, 2],
+      "causal_parents": [
+        1,
+        2
+      ],
       "status": "ok",
       "confidence": null
     },
@@ -55,13 +63,15 @@
       "step_id": 4,
       "type": "tool_call",
       "tool": "send_email",
-      "transport": "sdk",
-      "args_blob": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-      "result_blob": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "transport": "http",
+      "args_blob": "sha256:26bcf7637b0dc062916013bfadf7b55e6aae947e0b9e4f0aacf7ef67ff3233a7",
+      "result_blob": "sha256:417c186ab487b94738705099da27ce13fc215083c4f720619169c9c6e8d641c2",
       "timestamp_ms": 1750240001310,
       "latency_ms": 230,
       "side_effecting": true,
-      "causal_parents": [3],
+      "causal_parents": [
+        3
+      ],
       "status": "error",
       "confidence": null
     }
