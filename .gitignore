@@ -54,6 +54,10 @@ coverage.xml
 cover/
 
 WORK_DISTRIBUTION.md
+
+# Local design / planning notes (kept local, never pushed; module READMEs are not affected)
+ai_agents/docs/
+
 # Translations
 *.mo
 *.pot
