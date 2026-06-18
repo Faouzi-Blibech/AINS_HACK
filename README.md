@@ -131,7 +131,7 @@ Run against a synthetic test set of injected failures (see [`eval/`](eval/)).
 | Language | Python | Native language of the agent ecosystem. |
 | Interception | Framework-agnostic HTTP proxy + native MCP proxy + SDK hooks | Keeps the agent unmodified across LangChain / LangGraph, raw SDK, and MCP-based agents. |
 | Trace store | Structured spans (SQLite + JSON), OpenTelemetry GenAI-style conventions | Queryable; content-addressed blob store dedupes large payloads so storage stays linear. |
-| AI layer | LLM API (e.g. Claude) | Powers the matcher, root-cause, counterfactual, and debug agents. |
+| AI layer | LLM API (open-source model, provider TBD) | Powers the matcher, root-cause, counterfactual, and debug agents. |
 | Interface | Web app | Trajectory tree, step inspector, divergence diff. |
 
 See [`docs/architecture.md`](docs/architecture.md) and the trace contract in [`docs/trace_schema.json`](docs/trace_schema.json).
