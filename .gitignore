@@ -219,3 +219,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Node / React visualizer
+visualizer/node_modules/
+visualizer/dist/

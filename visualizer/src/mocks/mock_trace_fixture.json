@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0",
+  "run_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "agent": "jira_triage_agent",
+  "created_at_ms": 1718483200000,
+  "mode": "record",
+  "parent_run_id": null,
+  "fork_step_id": null,
+  "status": "ok",
+  "duration_ms": 1052,
+  "steps": [
+    {
+      "step_id": 1,
+      "type": "llm_call",
+      "model": "claude-opus-4-8",
+      "prompt_blob": "sha256:a3f9c2e1b4d5678901234567890abcdef1234567890abcdef1234567890abcd",
+      "response_blob": "sha256:b7d1e4f2a8c345678901234567890abcdef1234567890abcdef1234567890ab",
+      "timestamp_ms": 1718483200000,
+      "latency_ms": 842,
+      "token_usage": {
+        "prompt": 1200,
+        "completion": 340
+      },
+      "confidence": 0.91,
+      "side_effecting": false,
+      "causal_parents": [],
+      "status": "ok"
+    },
+    {
+      "step_id": 2,
+      "type": "tool_call",
+      "tool": "assign_ticket",
+      "transport": "mcp",
+      "args_blob": "sha256:c1a2b3d4e5f678901234567890abcdef1234567890abcdef1234567890abcdef",
+      "result_blob": "sha256:d4e5f6a7b8c901234567890abcdef1234567890abcdef1234567890abcdef12",
+      "timestamp_ms": 1718483201200,
+      "latency_ms": 210,
+      "side_effecting": true,
+      "causal_parents": [1],
+      "status": "ok"
+    }
+  ]
+}
