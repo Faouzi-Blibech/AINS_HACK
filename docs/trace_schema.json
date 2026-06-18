@@ -3,82 +3,185 @@
   "title": "Cassette Trace",
   "description": "The recorded trajectory of a single agent run. This is the contract shared by every module: recorder writes it, trace_store persists it, replay_engine reads it, ai_agents reason over it, visualizer renders it. Large payloads are never stored inline, only a sha256 blob reference.",
   "type": "object",
-  "required": ["run_id", "created_at_ms", "steps"],
+  "required": [
+    "schema_version",
+    "run_id",
+    "created_at_ms",
+    "steps"
+  ],
   "properties": {
-    "run_id": { "type": "string", "description": "UUID for the run." },
-    "agent": { "type": "string", "description": "Identifier of the agent under test." },
-    "created_at_ms": { "type": "integer", "description": "Run start, epoch ms." },
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+$",
+      "description": "Semver (major.minor) of the trace schema. Readers use this to handle older traces without guessing which fields exist.",
+      "default": "1.0"
+    },
+    "run_id": {
+      "type": "string",
+      "description": "UUID for the run."
+    },
+    "agent": {
+      "type": "string",
+      "description": "Identifier of the agent under test."
+    },
+    "created_at_ms": {
+      "type": "integer",
+      "description": "Run start, epoch ms."
+    },
     "mode": {
       "type": "string",
-      "enum": ["record", "play", "record-over"],
+      "enum": [
+        "record",
+        "play",
+        "record-over"
+      ],
       "description": "How this trace was produced."
     },
     "parent_run_id": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "If this run is a fork (record-over), the run it diverged from."
     },
     "fork_step_id": {
-      "type": ["integer", "null"],
+      "type": [
+        "integer",
+        "null"
+      ],
       "description": "Step at which a record-over fork diverged from the parent run."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "error",
+        "timeout",
+        "aborted"
+      ]
+    },
+    "duration_ms": {
+      "type": "integer"
     },
     "steps": {
       "type": "array",
-      "items": { "$ref": "#/definitions/step" }
+      "items": {
+        "$ref": "#/definitions/step"
+      }
     }
   },
   "definitions": {
     "step": {
       "type": "object",
-      "required": ["step_id", "type", "timestamp_ms"],
+      "required": [
+        "step_id",
+        "type",
+        "timestamp_ms"
+      ],
       "properties": {
-        "step_id": { "type": "integer" },
+        "step_id": {
+          "type": "integer"
+        },
         "type": {
           "type": "string",
-          "enum": ["llm_call", "tool_call"]
+          "enum": [
+            "llm_call",
+            "tool_call"
+          ]
         },
-        "timestamp_ms": { "type": "integer" },
-        "latency_ms": { "type": "integer" },
-        "status": { "type": "string", "enum": ["ok", "error"] },
-        "causal_parent": {
-          "type": ["integer", "null"],
-          "description": "step_id whose output caused this step. Used by the Temporal Blame Graph."
+        "timestamp_ms": {
+          "type": "integer"
+        },
+        "latency_ms": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "error"
+          ]
+        },
+        "causal_parents": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "description": "step_ids whose outputs caused this step. Array to support fan-in (e.g. parallel tool calls whose results are synthesised by a single LLM call). Empty array means no causal parent (first step). Used by the Temporal Blame Graph."
         },
         "side_effecting": {
           "type": "boolean",
           "description": "true = this call writes/sends/modifies the real world. ALWAYS mocked during replay. The core safety invariant."
         },
         "confidence": {
-          "type": ["number", "null"],
+          "type": [
+            "number",
+            "null"
+          ],
           "description": "Self-reported confidence at this step (0..1). Drives the self-eval / human-review flag."
         },
-
-        "model": { "type": "string", "description": "llm_call only." },
-        "params": { "type": "object", "description": "llm_call only: temperature, max_tokens, etc." },
-        "prompt_blob": { "type": "string", "description": "llm_call only: sha256:... ref to the full prompt + context window." },
-        "response_blob": { "type": "string", "description": "llm_call only: sha256:... ref to the model response." },
+        "model": {
+          "type": "string",
+          "description": "llm_call only."
+        },
+        "params": {
+          "type": "object",
+          "description": "llm_call only: temperature, max_tokens, etc."
+        },
+        "prompt_blob": {
+          "type": "string",
+          "description": "llm_call only: sha256:... ref to the full prompt + context window."
+        },
+        "response_blob": {
+          "type": "string",
+          "description": "llm_call only: sha256:... ref to the model response."
+        },
         "token_usage": {
           "type": "object",
           "properties": {
-            "prompt": { "type": "integer" },
-            "completion": { "type": "integer" }
+            "prompt": {
+              "type": "integer"
+            },
+            "completion": {
+              "type": "integer"
+            }
           }
         },
-
-        "tool": { "type": "string", "description": "tool_call only: tool name." },
-        "transport": { "type": "string", "enum": ["http", "mcp", "sdk"], "description": "tool_call only: which interception mode captured it." },
-        "args_blob": { "type": "string", "description": "tool_call only: sha256:... ref to the arguments." },
-        "result_blob": { "type": "string", "description": "tool_call only: sha256:... ref to the response payload." }
+        "tool": {
+          "type": "string",
+          "description": "tool_call only: tool name."
+        },
+        "transport": {
+          "type": "string",
+          "enum": [
+            "http",
+            "mcp",
+            "sdk"
+          ],
+          "description": "tool_call only: which interception mode captured it."
+        },
+        "args_blob": {
+          "type": "string",
+          "description": "tool_call only: sha256:... ref to the arguments."
+        },
+        "result_blob": {
+          "type": "string",
+          "description": "tool_call only: sha256:... ref to the response payload."
+        }
       }
     }
   },
   "examples": [
     {
+      "schema_version": "1.0",
       "run_id": "8c1d...",
       "agent": "jira_triage_agent",
       "created_at_ms": 1718483200000,
       "mode": "record",
       "parent_run_id": null,
       "fork_step_id": null,
+      "status": "ok",
+      "duration_ms": 1052,
       "steps": [
         {
           "step_id": 1,
@@ -88,10 +191,13 @@
           "response_blob": "sha256:b7d1e4...",
           "timestamp_ms": 1718483200000,
           "latency_ms": 842,
-          "token_usage": { "prompt": 1200, "completion": 340 },
+          "token_usage": {
+            "prompt": 1200,
+            "completion": 340
+          },
           "confidence": 0.91,
           "side_effecting": false,
-          "causal_parent": null,
+          "causal_parents": [],
           "status": "ok"
         },
         {
@@ -104,7 +210,9 @@
           "timestamp_ms": 1718483201200,
           "latency_ms": 210,
           "side_effecting": true,
-          "causal_parent": 1,
+          "causal_parents": [
+            1
+          ],
           "status": "ok"
         }
       ]
