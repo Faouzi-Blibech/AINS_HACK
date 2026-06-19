@@ -41,6 +41,8 @@ def build_step(*, step_id, prev_step_id, method, url, req_body, status_code,
         "confidence": None,
         "causal_parents": [prev_step_id] if prev_step_id else [],
     }
+    step["status_code"] = status_code
+    step["request_identity"] = request_identity(method, url, req_body, policy.volatile_fields())
     if kind == "llm_call":
         step["prompt_blob"] = req_blob
         step["response_blob"] = resp_blob

@@ -41,3 +41,13 @@ def test_request_identity_stable_ignores_volatile():
     a = request_identity("POST", "http://h/x", '{"a":1,"timestamp":1}', ["timestamp"])
     b = request_identity("POST", "http://h/x", '{"timestamp":999,"a":1}', ["timestamp"])
     assert a == b
+
+def test_step_carries_status_code_and_request_identity():
+    s = build_step(step_id=1, prev_step_id=None, method="POST",
+        url="http://127.0.0.1:9/assign_ticket",
+        req_body='{"ticket_key":"T1","team":"Backend"}',
+        status_code=201, resp_body='{"ok":true}', latency_ms=4, ts_ms=1, policy=P)
+    assert s["status_code"] == 201
+    assert s["request_identity"] == request_identity(
+        "POST", "http://127.0.0.1:9/assign_ticket",
+        '{"ticket_key":"T1","team":"Backend"}', P.volatile_fields())

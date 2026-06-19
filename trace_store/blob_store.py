@@ -11,6 +11,10 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
+
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
 
 def _get_blob_dir() -> str:
     d = os.environ.get("CASSETTE_BLOB_DIR", "./blobs")
@@ -31,5 +35,10 @@ def store_blob(content: str) -> str:
 def fetch_blob(ref: str) -> str:
     """Resolve a sha256:... reference back to its raw content."""
     h = ref.replace("sha256:", "")
+    if not _HEX64.match(h):
+        raise ValueError(f"invalid blob digest: {h!r}")
     with open(os.path.join(_get_blob_dir(), h), encoding="utf-8") as f:
-        return f.read()
+        content = f.read()
+    if hashlib.sha256(content.encode()).hexdigest() != h:
+        raise ValueError(f"blob integrity check failed: {ref}")
+    return content

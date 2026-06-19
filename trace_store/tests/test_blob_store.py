@@ -34,3 +34,10 @@ def test_blob_deduplication(monkeypatch, tmp_path):
     
     # Should only create one file
     assert len(os.listdir(str(tmp_path))) == 1
+
+import pytest
+from trace_store.blob_store import fetch_blob
+
+def test_fetch_blob_rejects_traversal_ref():
+    with pytest.raises(ValueError):
+        fetch_blob("sha256:../../../../etc/passwd")
