@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import BlameVerdict from "../components/BlameVerdict.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import StepInspector from "../StepInspector.jsx";
 import TraceGraph from "../TraceGraph.jsx";
+import { MOCK_BLAME } from "../mocks/mock_blame.js";
 import { truncateRunId } from "../utils/format.js";
 
 export default function RunInspector() {
@@ -93,13 +95,18 @@ export default function RunInspector() {
         </div>
       </header>
 
+      <div className="shrink-0 px-4 pt-4 lg:px-6 lg:pt-6">
+        <BlameVerdict blame={MOCK_BLAME} />
+      </div>
+
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden p-4 lg:grid-cols-[1fr_22rem] lg:p-6">
         <TraceGraph
           trace={trace}
           selectedStepId={selectedStepId}
           onSelectStep={setSelectedStepId}
+          blame={MOCK_BLAME}
         />
-        <StepInspector trace={trace} stepId={selectedStepId} />
+        <StepInspector trace={trace} stepId={selectedStepId} blame={MOCK_BLAME} />
       </div>
     </div>
   );
