@@ -39,6 +39,8 @@ No single interception point covers how modern agents call tools. Cassette inter
 | **MCP proxy** | MCP-protocol tool calls (Jira, Confluence, …) | Wrap the MCP client layer |
 | **SDK hooks** | Native function-calling tools wired via SDK | Decorator / middleware on tool definitions |
 
+The HTTP record path is implemented: an agent-agnostic mitmproxy forward proxy with per-process CA trust (never the system store) and secret redaction on capture. Run the hermetic end-to-end demo with `python -m recorder.record --demo`.
+
 ---
 
 ## 3. Core AI mechanism: *AI is the mechanism, not a feature*

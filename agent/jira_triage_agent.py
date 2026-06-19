@@ -80,7 +80,7 @@ def _llm_triage_live(ticket: Ticket, api_key: str) -> dict:
         f"Priority field (raw): {ticket.raw_priority}\nReturn only the JSON."
     )
     resp = httpx.post(
-        GROQ_URL,
+        os.environ.get("CASSETTE_LLM_URL", GROQ_URL),
         headers={"Authorization": f"Bearer {api_key}"},
         json={
             "model": AGENT_MODEL,
@@ -109,9 +109,8 @@ def _llm_triage_offline(ticket: Ticket) -> dict:
     }
 
 
-def get_priority(ticket: Ticket) -> str:
-    """Read-only tool: resolve priority. The ambiguous field sinks the run here."""
-    raw = ticket.raw_priority.lower()
+def _resolve_priority(raw: str) -> str:
+    raw = raw.lower()
     if "p1" in raw or "critical" in raw:
         return "critical"
     if "p3" in raw or "low" in raw:
@@ -119,13 +118,37 @@ def get_priority(ticket: Ticket) -> str:
     return "medium"  # "P2 / medium?" on a real outage -> should have been high
 
 
+def _tools_url():
+    return os.environ.get("CASSETTE_TOOLS_URL")
+
+
+def get_priority(ticket: Ticket) -> str:
+    """Read-only tool: resolve priority. The ambiguous field sinks the run here."""
+    url = _tools_url()
+    if url:
+        r = httpx.post(f"{url}/get_priority", json={"raw_priority": ticket.raw_priority}, timeout=10)
+        r.raise_for_status()
+        return r.json()["priority"]
+    return _resolve_priority(ticket.raw_priority)
+
+
 def assign_ticket(ticket_key: str, team: str) -> dict:
     """Side-effecting tool: writes the assignment to Jira."""
+    url = _tools_url()
+    if url:
+        r = httpx.post(f"{url}/assign_ticket", json={"ticket_key": ticket_key, "team": team}, timeout=10)
+        r.raise_for_status()
+        return r.json()
     return {"ok": True, "ticket": ticket_key, "assigned_to": team}
 
 
 def send_email(to: str, subject: str, body: str) -> dict:
     """Side-effecting tool: sends the reporter notification."""
+    url = _tools_url()
+    if url:
+        r = httpx.post(f"{url}/send_email", json={"to": to, "subject": subject, "body": body}, timeout=10)
+        r.raise_for_status()
+        return r.json()
     return {"ok": True, "to": to, "subject": subject, "delivered": True}
 
 
