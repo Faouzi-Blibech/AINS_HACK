@@ -39,6 +39,8 @@ No single interception point covers how modern agents call tools. Cassette inter
 | **MCP proxy** | MCP-protocol tool calls (Jira, Confluence, …) | Wrap the MCP client layer |
 | **SDK hooks** | Native function-calling tools wired via SDK | Decorator / middleware on tool definitions |
 
+The HTTP record path is implemented: an agent-agnostic mitmproxy forward proxy with per-process CA trust (never the system store) and secret redaction on capture. Run the hermetic end-to-end demo with `python -m recorder.record --demo`.
+
 ---
 
 ## 3. Core AI mechanism: *AI is the mechanism, not a feature*
@@ -131,7 +133,7 @@ Run against a synthetic test set of injected failures (see [`eval/`](eval/)).
 | Language | Python | Native language of the agent ecosystem. |
 | Interception | Framework-agnostic HTTP proxy + native MCP proxy + SDK hooks | Keeps the agent unmodified across LangChain / LangGraph, raw SDK, and MCP-based agents. |
 | Trace store | Structured spans (SQLite + JSON), OpenTelemetry GenAI-style conventions | Queryable; content-addressed blob store dedupes large payloads so storage stays linear. |
-| AI layer | LLM API (open-source model, provider TBD) | Powers the matcher, root-cause, counterfactual, and debug agents. |
+| AI layer | Groq (open-source models, OpenAI-compatible API) | Powers the matcher, root-cause, counterfactual, and debug agents. |
 | Interface | Web app | Trajectory tree, step inspector, divergence diff. |
 
 See [`docs/architecture.md`](docs/architecture.md) and the trace contract in [`docs/trace_schema.json`](docs/trace_schema.json).

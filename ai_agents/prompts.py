@@ -9,12 +9,12 @@ Three prompts live here; they are the load-bearing "AI is the mechanism" surface
   3. DEBUG_AGENT_INJECTION - turns plain English into a structurally valid
      injection (the clearest proof the LLM is load-bearing).
 
-These prompts are provider-agnostic. The concrete model and SDK are not decided
-yet (candidates: open-source models served via Groq, NVIDIA NIM, or any
-OpenAI-compatible endpoint), so nothing here depends on a specific provider's
-API. Two tiers are referenced: a stronger model for reasoning (root-cause
-verdict, debug agent) and a cheaper/faster one for the high-volume equivalence
-judge. Where a provider supports structured output (JSON-schema / JSON mode),
+These prompts are provider-agnostic in mechanism: the provider is Groq
+(OpenAI-compatible API, open-source models), but nothing here depends on
+Groq-specific surface area. Any OpenAI-compatible endpoint with JSON/structured-
+output mode is sufficient to run these prompts. Two tiers are referenced: a
+stronger model for reasoning (root-cause verdict, debug agent) and a
+cheaper/faster one for the high-volume equivalence judge. Where a provider supports structured output (JSON-schema / JSON mode),
 pass the matching `*_SCHEMA` so the result is schema-valid by construction;
 otherwise instruct the model to return JSON and validate against the schema.
 These are drafts to tune against the sample fixture.
@@ -28,11 +28,12 @@ import json
 import os
 from typing import Any
 
-# Model selection is deferred and provider-agnostic: the concrete ids are read
-# from the environment so the provider can be chosen later without touching
-# these prompts. Empty until configured at deployment.
-REASONING_MODEL = os.environ.get("CASSETTE_REASONING_MODEL", "")
-CHEAP_MODEL = os.environ.get("CASSETTE_CHEAP_MODEL", "")
+from ai_agents.llm import cheap_model, reasoning_model
+
+# Model ids come from the single source of truth in ai_agents.llm; they read
+# from environment variables and fall back to the Groq defaults.
+REASONING_MODEL = reasoning_model()
+CHEAP_MODEL = cheap_model()
 
 
 # --------------------------------------------------------------------------- #

@@ -1,0 +1,8 @@
+record_hosts: ["api.groq.com", "api.openai.com", "api.anthropic.com", "127.0.0.1", "localhost"]
+llm:
+  hosts: ["api.groq.com", "api.openai.com", "api.anthropic.com"]
+  path_patterns: ["/chat/completions", "/messages", "/v1/responses"]
+read_only_methods: ["GET", "HEAD", "OPTIONS"]
+read_only_paths: ["/get_priority"]   # read-only tools that use POST
+redact_fields: ["authorization", "api_key", "api-key", "x-api-key", "password", "secret", "token"]
+volatile_fields: ["idempotency_key", "request_id", "timestamp", "created"]
