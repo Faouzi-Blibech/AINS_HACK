@@ -228,3 +228,4 @@ __marimo__/
 # Node / React visualizer
 visualizer/node_modules/
 visualizer/dist/
+.gstack/
