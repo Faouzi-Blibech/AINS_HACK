@@ -15,3 +15,17 @@ Each captured call becomes a step written to the trace store, with large payload
 `http_proxy.py` is a real **mitmproxy forward proxy**. Point any agent at it via env (`HTTP_PROXY`/`HTTPS_PROXY` + `SSL_CERT_FILE` for the mitmproxy CA, all printed by `Recorder.env()`); it records every LLM + REST tool call into a schema-valid trace, payloads stored as sha256 blobs. It is **agent-agnostic** (no `agent/` imports) and driven by a declarative `policy.yaml`: classification (llm vs tool), side-effect rules, and a secret-redaction denylist. Secrets never hit disk (headers are not persisted; denylisted body fields are redacted). CA trust is per-process only (`SSL_CERT_FILE`), never the system store.
 
 Record any agent (generic CLI): `python -m recorder.record -- <your agent command>`. Hermetic Jira demo: `python -m recorder.record --demo`.
+
+## Replay (play mode)
+
+Re-run a recorded agent through the proxy, served entirely from tape:
+
+    python -m recorder.replay --demo
+
+The proxy computes each request's identity and delegates to the replay engine
+(`replay_engine.Replayer.response_for`), which serves the recorded response.
+Hermetic: no upstream runs during replay, side-effecting calls are served but
+never executed (`live_executed` stays 0), and a faithful replay reports
+`divergences: 0`. For an arbitrary recorded run:
+
+    python -m recorder.replay --run-id NAME --tape tape.sqlite3 --blob-dir blobs -- <agent cmd>
