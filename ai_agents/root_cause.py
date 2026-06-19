@@ -27,8 +27,15 @@ comparator and nothing else changes.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from typing import Callable
 
+import ai_agents.confidence as confidence
+from ai_agents import llm
+from ai_agents import prompts
+from ai_agents import trace_content
+from ai_agents.llm import LLMNotConfigured
 from ai_agents.replay_interface import (
     Injection,
     OutcomeComparator,
@@ -73,6 +80,22 @@ class BlameGraph:
             ],
         }
 
+    def as_ai_result(self) -> confidence.AIResult:
+        """Wrap the verdict with confidence using the standard AIResult envelope.
+
+        Downstream code gets {value, confidence, rationale, needs_review} and
+        the needs_review flag is driven by confidence.REVIEW_THRESHOLD.
+        """
+        rationale = (
+            f"Blame graph confidence {self.confidence:.2f}: "
+            + (
+                "single clear resolver identified."
+                if self.confidence >= confidence.REVIEW_THRESHOLD
+                else "multiple resolvers or none found; flagged for review."
+            )
+        )
+        return confidence.wrap(self.verdict, self.confidence, rationale=rationale)
+
 
 # --------------------------------------------------------------------------- #
 # Causal-graph helpers
@@ -103,9 +126,54 @@ def causal_ancestors(trace: dict, step_id: int) -> list[int]:
     return sorted(seen)
 
 
+def _causal_descendants(trace: dict, step_id: int) -> set[int]:
+    """All steps that are transitively downstream of `step_id`.
+
+    Mirrors causal_ancestors but walks downward: a step D is a descendant of N
+    if N appears in D's transitive causal_parents chain.
+    """
+    by_id = _steps_by_id(trace)
+    # Build a children map (inverse of causal_parents)
+    children: dict[int, list[int]] = {sid: [] for sid in by_id}
+    for sid, step in by_id.items():
+        for parent in step.get("causal_parents", []):
+            if parent in children:
+                children[parent].append(sid)
+
+    descendants: set[int] = set()
+    stack = list(children.get(step_id, []))
+    while stack:
+        cur = stack.pop()
+        if cur in descendants:
+            continue
+        descendants.add(cur)
+        stack.extend(children.get(cur, []))
+    return descendants
+
+
 def _injection_target(step: dict) -> str:
     """Which output of a step a corrective injection edits."""
     return "response" if step.get("type") == "llm_call" else "result"
+
+
+def _divergence(baseline_outputs: dict, perturbed_outputs: dict) -> float:
+    """Fraction of keys whose value differs between baseline and perturbed outputs.
+
+    Returns 0.0 if either side has no key_outputs (no signal to measure).
+
+    Note: assumes both outcomes report the same key set (true for ScriptedReplay).
+    When replay_engine.Replayer lands, keys added or dropped by the replay will
+    also count as differing.
+    """
+    if not baseline_outputs or not perturbed_outputs:
+        return 0.0
+    all_keys = set(baseline_outputs) | set(perturbed_outputs)
+    if not all_keys:
+        return 0.0
+    differing = sum(
+        1 for k in all_keys if baseline_outputs.get(k) != perturbed_outputs.get(k)
+    )
+    return differing / len(all_keys)
 
 
 # --------------------------------------------------------------------------- #
@@ -119,6 +187,7 @@ def analyze(
     *,
     replay: ReplayEngine,
     failure_resolved: OutcomeComparator | None = None,
+    content_resolver: Callable[[dict], str] | None = None,
 ) -> BlameGraph:
     """Compute the Temporal Blame Graph for a (failed) run.
 
@@ -133,6 +202,13 @@ def analyze(
     failure_resolved
         Judges whether a perturbed replay resolved the failure. Backed by the
         semantic matcher in production; defaults to a status comparison.
+    content_resolver
+        Optional callable ``step -> str`` (e.g. from
+        ``ai_agents.trace_content.make_resolver``). When provided, each
+        step's rationale is extended with the resolver's output:
+        ``"<tier_rationale> | <content_resolver(step)>"``. When None
+        (the default), rationales are exactly the tier strings and all
+        existing behaviour is preserved byte-for-byte.
     """
     run_id = trace.get("run_id", "")
     resolved = failure_resolved or default_failure_resolved
@@ -158,15 +234,25 @@ def analyze(
         )
         outcome: ReplayOutcome = replay.replay_with_injection(run_id, injection)
         did_resolve = resolved(baseline, outcome)
-        # Scoring is currently binary (resolves / does not). The richer version
-        # grades blame by how much the downstream trajectory diverges.
-        score = 1.0 if did_resolve else 0.0
-        rationale = (
-            "correcting this step's output resolves the failure"
-            if did_resolve
-            else "perturbing this step does not change the outcome"
-        )
-        scores.append(BlameStepScore(sid, score, rationale))
+        div = _divergence(baseline.key_outputs, outcome.key_outputs)
+
+        if did_resolve:
+            blame_score = 1.0
+            rationale = "root cause: correcting this step's output resolves the failure"
+        elif div > 0:
+            blame_score = round(0.2 + 0.4 * div, 3)
+            rationale = (
+                "contributor: perturbing this step changes the downstream trajectory "
+                "but does not resolve the failure"
+            )
+        else:
+            blame_score = 0.0
+            rationale = "innocent: perturbing this step does not change the outcome"
+
+        if content_resolver is not None:
+            rationale = f"{rationale} | {content_resolver(step)}"
+
+        scores.append(BlameStepScore(sid, blame_score, rationale))
         if did_resolve:
             resolving.append(sid)
 
@@ -175,14 +261,14 @@ def analyze(
 
     if root is None:
         verdict = f"Step {failed_step_id} failed; no single upstream step explains it."
-        confidence = 0.3
+        conf = 0.3
     else:
         verdict = f"Step {failed_step_id} is where it failed. Step {root} is why."
-        # Confident when exactly one step resolves it; less so when several do.
-        confidence = 0.9 if len(resolving) == 1 else 0.6
+        # Confident when exactly one step resolves it; ambiguous when several do.
+        conf = 0.9 if len(resolving) == 1 else 0.5
 
     scores.sort(key=lambda s: s.step_id)
-    return BlameGraph(run_id, failed_step_id, root, verdict, confidence, scores)
+    return BlameGraph(run_id, failed_step_id, root, verdict, conf, scores)
 
 
 # --------------------------------------------------------------------------- #
@@ -199,6 +285,11 @@ class ScriptedReplay:
     tested end to end before the real Replayer and matcher exist. It always
     reports side_effect_count == 0, honoring the core safety invariant.
 
+    key_outputs are populated to enable the divergence signal:
+    - Baseline: one entry per step with a stable signature.
+    - Injection at step N: N and all transitive descendants change to a
+      different signature; all other steps keep the baseline signature.
+
     Replace with replay_engine.Replayer (same ReplayEngine protocol).
     """
 
@@ -207,6 +298,16 @@ class ScriptedReplay:
         self._run_id = trace.get("run_id", "")
         self._resolves_at = set(resolves_at)
         self._failed = infer_failed_step(trace)
+        # Cache all step ids for key_outputs population
+        self._all_step_ids: list[int] = [
+            s["step_id"] for s in trace.get("steps", [])
+        ]
+
+    def _baseline_key_outputs(self) -> dict[str, str]:
+        return {f"step{sid}": "<baseline>" for sid in self._all_step_ids}
+
+    def _descendants_of(self, step_id: int) -> set[int]:
+        return _causal_descendants(self._trace, step_id)
 
     def replay(self, run_id: str) -> ReplayOutcome:
         return ReplayOutcome(
@@ -214,17 +315,105 @@ class ScriptedReplay:
             final_status="error" if self._failed is not None else "ok",
             failed_step_id=self._failed,
             side_effect_count=0,
+            key_outputs=self._baseline_key_outputs(),
         )
 
     def replay_with_injection(self, run_id: str, injection: Injection) -> ReplayOutcome:
-        fixed = injection.step_id in self._resolves_at
+        n = injection.step_id
+        fixed = n in self._resolves_at
+        # Build perturbed key_outputs: N and its descendants use a different signature
+        descendants = self._descendants_of(n)
+        changed_steps = {n} | descendants
+        perturbed_outputs = {
+            f"step{sid}": (
+                f"perturbed@{n}" if sid in changed_steps else "<baseline>"
+            )
+            for sid in self._all_step_ids
+        }
         return ReplayOutcome(
             run_id=run_id,
             final_status="ok" if fixed else "error",
             failed_step_id=None if fixed else self._failed,
             side_effect_count=0,
-            replay_run_id=f"{run_id}-fork@{injection.step_id}",
+            key_outputs=perturbed_outputs,
+            replay_run_id=f"{run_id}-fork@{n}",
         )
+
+
+# --------------------------------------------------------------------------- #
+# LLM-phrased verdict (additive; does not change analyze's default behavior)
+# --------------------------------------------------------------------------- #
+
+
+def verdict_via_llm(
+    graph: BlameGraph,
+    trace: dict,
+    *,
+    content_resolver: Callable[[dict], str] | None = None,
+) -> confidence.AIResult:
+    """Phrase a root-cause verdict by calling the LLM.
+
+    The deterministic blame graph (from ``analyze``) supplies the structure;
+    the LLM turns it into a human verdict with rationale and calibrated
+    confidence.
+
+    Parameters
+    ----------
+    graph:
+        The ``BlameGraph`` produced by ``analyze``.
+    trace:
+        The trace document (same dict passed to ``analyze``).
+    content_resolver:
+        Optional ``step -> str`` callable (e.g. from
+        ``ai_agents.trace_content.make_resolver``). When provided, each
+        step summary is the resolver's output; otherwise
+        ``trace_content.describe_step`` is used (structural, no blobs).
+
+    Returns
+    -------
+    AIResult[str]
+        The LLM-phrased verdict wrapped in the confidence envelope.
+
+    Raises
+    ------
+    (never) -- on ``LLMNotConfigured`` falls back to
+    ``graph.as_ai_result()`` (the deterministic verdict).
+    """
+    by_id: dict[int, dict] = {s["step_id"]: s for s in trace.get("steps", [])}
+    blame_scores: dict[int, float] = {s.step_id: s.blame_score for s in graph.steps}
+
+    if content_resolver is not None:
+        step_summaries: dict[int, str] = {
+            sid: content_resolver(by_id[sid])
+            for sid in blame_scores
+            if sid in by_id
+        }
+    else:
+        step_summaries = {
+            sid: trace_content.describe_step(by_id[sid])
+            for sid in blame_scores
+            if sid in by_id
+        }
+
+    try:
+        raw = llm.llm_complete(
+            system=prompts.ROOT_CAUSE_VERDICT_SYSTEM,
+            user=prompts.root_cause_verdict_user(
+                failed_step_id=graph.failed_step_id,
+                blame_scores=blame_scores,
+                step_summaries=step_summaries,
+            ),
+            model=llm.reasoning_model(),
+            json_schema=prompts.ROOT_CAUSE_VERDICT_SCHEMA,
+        )
+        data = json.loads(raw)
+        return confidence.wrap(
+            data["verdict"],
+            data["confidence"],
+            rationale=data["rationale"],
+        )
+    except (LLMNotConfigured, KeyError, ValueError):
+        return graph.as_ai_result()
 
 
 if __name__ == "__main__":  # runnable demo against the sample fixture
