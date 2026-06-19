@@ -7,7 +7,8 @@ uvicorn[standard]
 pydantic
 
 # --- Agent + LLM ---
-anthropic            # AI layer: semantic matcher, root-cause, counterfactual, debug agent
+# AI layer calls Groq's OpenAI-compatible API directly over httpx (see ai_agents/llm.py)
+python-dotenv        # loads .env so GROQ_API_KEY is picked up automatically
 langgraph            # optional: graph-based agent under test
 langchain-core
 
