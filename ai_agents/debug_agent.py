@@ -10,12 +10,15 @@ The injection it produces is a replay_interface.Injection (the same shape the
 blame graph perturbs with and the /diverge API accepts), so the debug agent and
 the rest of the AI layer speak one language.
 
-Prompt and validation are drafted (see prompts.DEBUG_AGENT_*). The live LLM call
-is provider-agnostic and wired once the model is chosen and the divergence
-replay is ready. `validate_injection` is runnable now.
+Prompt, JSON schema, and validation are all here. The live LLM call goes through
+ai_agents.llm so any OpenAI-compatible provider works without touching this file.
 """
 from __future__ import annotations
 
+import json
+
+from ai_agents import llm
+from ai_agents import prompts
 from ai_agents.confidence import AIResult, wrap
 from ai_agents.replay_interface import Injection
 
@@ -48,28 +51,50 @@ def validate_injection(trace: dict, injection: Injection) -> None:
 
 
 def build_injection(trace: dict, instruction: str) -> AIResult[Injection]:
-    """Turn a plain-English instruction into a validated injection.
+    """Turn a plain-English instruction into a validated, confidence-wrapped Injection.
 
-    Live implementation (provider-agnostic): send prompts.DEBUG_AGENT_SYSTEM +
-    debug_agent_user to the configured LLM, requesting JSON that matches
-    DEBUG_AGENT_INJECTION_SCHEMA (use the provider's JSON-schema / structured-
-    output mode if available, otherwise instruct the model to return JSON), parse
-    into an Injection, run validate_injection, and wrap with the model's
-    self-reported confidence. `llm_complete` is a thin adapter over whichever
-    provider is chosen (Groq, NVIDIA NIM, an OpenAI-compatible endpoint, ...):
+    Calls the configured LLM with the debug-agent system prompt and a compact
+    trace summary, requests a JSON object matching DEBUG_AGENT_INJECTION_SCHEMA,
+    parses it into an Injection, validates it against the trace, then returns it
+    in an AIResult envelope with the model's self-reported confidence and rationale.
 
-        from ai_agents import prompts
-        raw = llm_complete(
-            model=prompts.REASONING_MODEL,
-            system=prompts.DEBUG_AGENT_SYSTEM,
-            user=prompts.debug_agent_user(
-                instruction=instruction,
-                trace_summary=prompts.summarize_trace_for_prompt(trace)),
-            json_schema=prompts.DEBUG_AGENT_INJECTION_SCHEMA,
-        )
+    Parameters
+    ----------
+    trace:
+        The full recorded trace dict (same shape as docs/fixtures/sample_trace.json).
+    instruction:
+        A plain-English debugging instruction from the engineer, e.g.
+        "at step 2 the priority should be high, not medium".
+
+    Returns
+    -------
+    AIResult[Injection]
+        The parsed, validated injection wrapped with confidence and rationale.
+
+    Raises
+    ------
+    llm.LLMNotConfigured
+        When GROQ_API_KEY is absent. No deterministic fallback exists for the
+        debug agent; the error must surface so the caller can inform the engineer.
+    ValueError
+        When validate_injection rejects the model's output (bad step_id or target),
+        or when the model returns non-JSON or omits a required key.
+    """
+    summary = prompts.summarize_trace_for_prompt(trace)
+    raw = llm.llm_complete(
+        system=prompts.DEBUG_AGENT_SYSTEM,
+        user=prompts.debug_agent_user(instruction=instruction, trace_summary=summary),
+        model=llm.reasoning_model(),
+        json_schema=prompts.DEBUG_AGENT_INJECTION_SCHEMA,
+    )
+    try:
         data = json.loads(raw)
         inj = Injection(step_id=data["step_id"], target=data["target"], value=data["value"])
-        validate_injection(trace, inj)
-        return wrap(inj, data["confidence"], data["rationale"])
-    """
-    raise NotImplementedError("wire the LLM call (prompt + schema drafted in prompts.py)")
+        confidence = data["confidence"]
+        rationale = data["rationale"]
+    except (json.JSONDecodeError, KeyError):
+        raise ValueError(
+            "debug agent: could not parse a valid injection from the model response"
+        )
+    validate_injection(trace, inj)
+    return wrap(inj, confidence, rationale=rationale)
