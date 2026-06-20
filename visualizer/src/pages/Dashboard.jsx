@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import StatusBadge from "../components/StatusBadge.jsx";
-import { listRuns } from "../api/client.js";
+import { listRuns, getLibrary, getBlame } from "../api/client.js";
 import { formatTimestamp, truncateRunId } from "../utils/format.js";
 
 function LoadingRows() {
@@ -31,14 +31,57 @@ export default function Dashboard() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // Set of run_ids that have a real failure-library match
+  const [fmMatchedIds, setFmMatchedIds] = useState(new Set());
+  // Map from run_id to matched library entry id (for tooltip)
+  const [fmMatchLabels, setFmMatchLabels] = useState({});
 
   useEffect(() => {
     setLoading(true);
     setError(null);
+    setFmMatchedIds(new Set());
+    setFmMatchLabels({});
+
     listRuns()
       .then((data) => {
-        setRuns(data.runs ?? []);
-        setTotal(data.total ?? (data.runs ?? []).length);
+        const runList = data.runs ?? [];
+        setRuns(runList);
+        setTotal(data.total ?? runList.length);
+
+        // For error runs, fetch library and blame to determine real FM matches.
+        // If anything fails, silently show no marker rather than crashing.
+        const errorRuns = runList.filter((r) => r.status === "error");
+        if (errorRuns.length === 0) return;
+
+        getLibrary()
+          .catch(() => null)
+          .then((libraryData) => {
+            if (!libraryData?.entries?.length) return;
+            const entries = libraryData.entries;
+
+            Promise.all(
+              errorRuns.map((r) =>
+                getBlame(r.run_id)
+                  .catch(() => null)
+                  .then((blame) => ({ run_id: r.run_id, blame }))
+              )
+            ).then((results) => {
+              const matched = new Set();
+              const labels = {};
+              for (const { run_id, blame } of results) {
+                if (!blame?.root_cause_step_id) continue;
+                const entry = entries.find(
+                  (e) => e.blame_step === blame.root_cause_step_id
+                );
+                if (entry) {
+                  matched.add(run_id);
+                  labels[run_id] = entry.id ?? null;
+                }
+              }
+              setFmMatchedIds(matched);
+              setFmMatchLabels(labels);
+            });
+          });
       })
       .catch((err) => setError(err.message ?? "Failed to load runs."))
       .finally(() => setLoading(false));
@@ -246,7 +289,44 @@ export default function Dashboard() {
 
                     {/* Status */}
                     <td style={{ padding: "13px 16px" }}>
-                      <StatusBadge status={run.status} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <StatusBadge status={run.status} />
+                        {fmMatchedIds.has(run.run_id) && (
+                          <span
+                            title={
+                              fmMatchLabels[run.run_id]
+                                ? `Matched failure pattern ${fmMatchLabels[run.run_id]}`
+                                : "Matched failure pattern"
+                            }
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                              font: "600 8.5px var(--mono)",
+                              letterSpacing: ".04em",
+                              color: "var(--warn)",
+                              background: "var(--warn-dim)",
+                              border: "1px solid var(--warn)",
+                              borderRadius: 5,
+                              padding: "2px 6px",
+                              whiteSpace: "nowrap",
+                              cursor: "default",
+                            }}
+                          >
+                            <span
+                              style={{
+                                width: 5,
+                                height: 5,
+                                borderRadius: "50%",
+                                background: "var(--warn)",
+                                display: "inline-block",
+                                flex: "none",
+                              }}
+                            />
+                            FM
+                          </span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))

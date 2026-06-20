@@ -1,0 +1,67 @@
+[
+  {
+    "expected": "The ticket was routed to the Backend Engineers queue",
+    "actual": "Routed to backend",
+    "gold_equivalent": true
+  },
+  {
+    "expected": "Assignment succeeded: ticket assigned to the DevOps team",
+    "actual": "Ticket has been assigned to DevOps",
+    "gold_equivalent": true
+  },
+  {
+    "expected": "Priority set to P1 (critical)",
+    "actual": "Marked as critical priority",
+    "gold_equivalent": true
+  },
+  {
+    "expected": "Notification sent to stakeholders",
+    "actual": "Stakeholders have been notified via email",
+    "gold_equivalent": true
+  },
+  {
+    "expected": "Schema validation passed",
+    "actual": "Data schema is valid",
+    "gold_equivalent": true
+  },
+  {
+    "expected": "The ticket was routed to the Backend Engineers queue",
+    "actual": "Ticket escalated to the Security team",
+    "gold_equivalent": false
+  },
+  {
+    "expected": "Assignment succeeded: ticket assigned to the DevOps team",
+    "actual": "Failed to assign ticket: user not found",
+    "gold_equivalent": false
+  },
+  {
+    "expected": "Priority set to P1 (critical)",
+    "actual": "Priority set to P4 (low)",
+    "gold_equivalent": false
+  },
+  {
+    "expected": "Notification sent to stakeholders",
+    "actual": "Notification failed: SMTP server unreachable",
+    "gold_equivalent": false
+  },
+  {
+    "expected": "Schema validation passed",
+    "actual": "Schema validation failed: missing required field 'user_id'",
+    "gold_equivalent": false
+  },
+  {
+    "expected": "Ticket closed with resolution: known infrastructure issue",
+    "actual": "Closed as known infra issue",
+    "gold_equivalent": true
+  },
+  {
+    "expected": "Case created in CRM with ID CASE-1234",
+    "actual": "New case opened: CASE-5678",
+    "gold_equivalent": false
+  },
+  {
+    "expected": "ticket assigned to backend team",
+    "actual": "routed to the Backend Engineers queue",
+    "gold_equivalent": true
+  }
+]

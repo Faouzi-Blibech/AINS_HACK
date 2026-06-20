@@ -208,15 +208,15 @@ export default function RunInspector() {
     rootCauseRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  // Memory match: pick entry whose blame_step === blame.root_cause_step_id, else first
+  // Memory match: only a real match -- library entry whose blame_step equals blame.root_cause_step_id.
+  // Returns null when no match exists so the badge and banner never appear for unmatched runs.
   const memoryEntry = (() => {
     if (!library?.entries?.length) return null;
     const rootStep = blame?.root_cause_step_id;
-    if (rootStep != null) {
-      const match = library.entries.find((e) => e.blame_step === rootStep);
-      if (match) return { entry: match, idx: library.entries.indexOf(match) };
-    }
-    return { entry: library.entries[0], idx: 0 };
+    if (rootStep == null) return null;
+    const match = library.entries.find((e) => e.blame_step === rootStep);
+    if (!match) return null;
+    return { entry: match, idx: library.entries.indexOf(match) };
   })();
 
   const memoryLabel = memoryEntry
@@ -411,6 +411,39 @@ export default function RunInspector() {
               <circle cx="8" cy="11" r=".9" fill="currentColor" />
             </svg>
             Root-cause
+          </button>
+        )}
+
+        {/* Preventive-warning badge -- shown when a failure-memory match exists */}
+        {memoryEntry && (
+          <button
+            onClick={() => {
+              // Scroll to the MemoryBanner (same pattern as scrollToRootCause)
+              rootCauseRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+            title="A preventive warning was injected because this run matched a known failure pattern"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "8px 14px",
+              borderRadius: 10,
+              border: "1px solid var(--warn)",
+              background: "var(--warn-dim)",
+              color: "var(--warn)",
+              font: "700 10px var(--mono)",
+              letterSpacing: ".06em",
+              cursor: "pointer",
+              transition: "background 0.12s",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {/* Shield icon */}
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M8 1.5L2 4v4c0 3.3 2.5 6.2 6 7 3.5-.8 6-3.7 6-7V4z" />
+              <path d="M5.5 8l2 2 3-3" />
+            </svg>
+            PREVENTIVE WARNING INJECTED
           </button>
         )}
       </div>
@@ -671,6 +704,7 @@ export default function RunInspector() {
           stepId={selectedStepId}
           blame={blame}
           resolvedStep={resolvedStep}
+          memoryMatch={memoryEntry ? { label: memoryLabel, blameStep: memoryEntry.entry.blame_step } : null}
         />
       </div>
     </div>

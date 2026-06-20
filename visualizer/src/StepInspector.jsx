@@ -106,7 +106,9 @@ function ContentBlock({ label, value }) {
   );
 }
 
-export default function StepInspector({ trace, stepId, blame, resolvedStep }) {
+// memoryMatch: optional { label, blameStep } -- when provided and the selected step
+// is the matched blame step, a one-line amber note is shown in the inspector.
+export default function StepInspector({ trace, stepId, blame, resolvedStep, memoryMatch }) {
   const step = trace?.steps?.find((s) => s.step_id === stepId);
 
   const blameEntry =
@@ -423,6 +425,31 @@ export default function StepInspector({ trace, stepId, blame, resolvedStep }) {
             <ContentBlock label="ARGUMENTS" value={args} />
             <ContentBlock label="RESULT" value={result} />
           </>
+        )}
+
+        {/* Failure-memory note -- shown only when this step is the matched blame step */}
+        {memoryMatch && memoryMatch.blameStep === stepId && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "10px 14px",
+              background: "var(--warn-dim)",
+              border: "1px solid var(--warn)",
+              borderRadius: 10,
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--warn)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}>
+              <path d="M8 1.5L2 4v4c0 3.3 2.5 6.2 6 7 3.5-.8 6-3.7 6-7V4z" />
+              <path d="M5.5 8l2 2 3-3" />
+            </svg>
+            <span style={{ font: "450 11.5px var(--ui)", color: "var(--warn)", lineHeight: 1.5 }}>
+              Failure-memory match: a preventive warning targeting this step was injected (
+              <span style={{ fontFamily: "var(--mono)", fontWeight: 600 }}>{memoryMatch.label}</span>
+              ).
+            </span>
+          </div>
         )}
 
         {/* Blame section */}

@@ -41,3 +41,8 @@ export function getLibrary(q) {
 export function getMetrics() {
   return _get("/metrics");
 }
+
+/** Return the eval report (4 metrics vs targets). */
+export function getEval() {
+  return _get("/eval");
+}

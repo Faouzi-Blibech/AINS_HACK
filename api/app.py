@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,6 +48,12 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_BLOB_DIR = str(_REPO_ROOT / "docs" / "fixtures" / "blobs")
 if "CASSETTE_BLOB_DIR" not in os.environ:
     os.environ["CASSETTE_BLOB_DIR"] = _DEFAULT_BLOB_DIR
+
+# Path to the eval harness results file (written by eval/harness.py).
+EVAL_RESULTS_PATH = os.environ.get(
+    "CASSETTE_EVAL_RESULTS",
+    str(_REPO_ROOT / "eval" / "results.json"),
+)
 
 # ---------------------------------------------------------------------------
 # Store initialisation and seeding (happens at import time)
@@ -118,6 +124,22 @@ class MetricsResponse(BaseModel):
     pass_rate: float          # 0..1 fraction of runs with status ok
     contained_pct: int        # side-effect containment; always 100 on replay
     determinism_rate: float   # 0..1; seeded/stubbed (seam for real metric)
+
+
+class EvalMetric(BaseModel):
+    key: str
+    label: str
+    value: Optional[Union[float, int]] = None   # float, int count, or null
+    target_text: str
+    passed: Optional[bool] = None
+    unit: str
+
+
+class EvalReport(BaseModel):
+    available: bool
+    generated_at: Optional[str] = None
+    metrics: list[EvalMetric] = []
+    caveats: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -276,3 +298,24 @@ def get_metrics() -> MetricsResponse:
         contained_pct=100,
         determinism_rate=1.0,  # stub: seam for real replay divergence metric
     )
+
+
+@app.get("/eval", response_model=EvalReport, tags=["eval"])
+def get_eval_report() -> EvalReport:
+    """Return the eval harness results.
+
+    Reads the results JSON written by eval/harness.py. If the file is missing
+    or cannot be parsed, returns an EvalReport with available=False and empty
+    metrics/caveats (the UI renders a 'not run yet' state). Never returns 404
+    or 500 for a missing results file.
+    """
+    _unavailable = EvalReport(available=False, metrics=[], caveats=[])
+    try:
+        path = Path(EVAL_RESULTS_PATH)
+        if not path.exists():
+            return _unavailable
+        raw = path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        return EvalReport(**data)
+    except Exception:
+        return _unavailable

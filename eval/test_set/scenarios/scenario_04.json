@@ -1,0 +1,50 @@
+{
+  "scenario_id": "sc04",
+  "injected_fault": "Step 1 (classify_intent) misclassified the intent causing an entire wrong workflow branch",
+  "expected_root_cause_step": 1,
+  "resolves_at": [1, 2],
+  "trace": {
+    "schema_version": "1.0",
+    "run_id": "run-sc04",
+    "agent": "router_agent",
+    "status": "error",
+    "steps": [
+      {
+        "step_id": 1,
+        "type": "llm_call",
+        "model": "llama-3.3-70b-versatile",
+        "side_effecting": false,
+        "causal_parents": [],
+        "status": "ok",
+        "key_outputs": {"intent": "billing_query_misclassified"}
+      },
+      {
+        "step_id": 2,
+        "type": "tool_call",
+        "tool": "lookup_department",
+        "side_effecting": false,
+        "causal_parents": [1],
+        "status": "ok",
+        "key_outputs": {"department": "tech_support_wrong"}
+      },
+      {
+        "step_id": 3,
+        "type": "tool_call",
+        "tool": "create_case",
+        "side_effecting": true,
+        "causal_parents": [1, 2],
+        "status": "ok",
+        "key_outputs": {"case_id": "CASE-999"}
+      },
+      {
+        "step_id": 4,
+        "type": "tool_call",
+        "tool": "escalate",
+        "side_effecting": true,
+        "causal_parents": [3],
+        "status": "error",
+        "key_outputs": {}
+      }
+    ]
+  }
+}
