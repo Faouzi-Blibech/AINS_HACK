@@ -1,0 +1,50 @@
+{
+  "scenario_id": "sc05",
+  "injected_fault": "Step 2 (validate_schema) passed invalid data shape that caused the downstream write to fail",
+  "expected_root_cause_step": 2,
+  "resolves_at": [2],
+  "trace": {
+    "schema_version": "1.0",
+    "run_id": "run-sc05",
+    "agent": "data_pipeline_agent",
+    "status": "error",
+    "steps": [
+      {
+        "step_id": 1,
+        "type": "llm_call",
+        "model": "llama-3.3-70b-versatile",
+        "side_effecting": false,
+        "causal_parents": [],
+        "status": "ok",
+        "key_outputs": {"plan": "ingest_and_store"}
+      },
+      {
+        "step_id": 2,
+        "type": "tool_call",
+        "tool": "validate_schema",
+        "side_effecting": false,
+        "causal_parents": [1],
+        "status": "ok",
+        "key_outputs": {"schema_valid": false, "data": {"field_a": null}}
+      },
+      {
+        "step_id": 3,
+        "type": "tool_call",
+        "tool": "transform_data",
+        "side_effecting": false,
+        "causal_parents": [2],
+        "status": "ok",
+        "key_outputs": {"transformed": "partial"}
+      },
+      {
+        "step_id": 4,
+        "type": "tool_call",
+        "tool": "write_to_db",
+        "side_effecting": true,
+        "causal_parents": [3],
+        "status": "error",
+        "key_outputs": {}
+      }
+    ]
+  }
+}

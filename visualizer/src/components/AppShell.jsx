@@ -7,12 +7,14 @@ const ICONS = {
   runs: "M3 5h14M3 10h14M3 15h8",
   trace: "M4 4l4 4-4 4M10 16h7",
   memory: "M10 2a5 5 0 00-3.5 8.5L3 14h14l-3.5-3.5A5 5 0 0010 2z",
+  eval: "M4 12l4 4 8-8M17 3H3a1 1 0 00-1 1v12a1 1 0 001 1h14a1 1 0 001-1V4a1 1 0 00-1-1z",
 };
 
 const NAV_ITEMS = [
   { label: "Runs", to: "/", end: true, icon: "runs", count: 6 },
   { label: "Trace", to: "/runs/latest", end: false, icon: "trace", count: 9, matchPrefix: "/runs/" },
   { label: "Failure memory", to: "/memory", end: false, icon: "memory", count: 14 },
+  { label: "Evaluation", to: "/eval", end: true, icon: "eval" },
 ];
 
 function CassetteLogoMark() {
@@ -143,6 +145,9 @@ export default function AppShell() {
   } else if (location.pathname === "/trace") {
     pageTitle = "Execution trace";
     pageSub = "Select a run to inspect";
+  } else if (location.pathname === "/eval") {
+    pageTitle = "Evaluation";
+    pageSub = "Metric scores vs targets";
   }
 
   return (

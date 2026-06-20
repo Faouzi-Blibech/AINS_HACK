@@ -1,0 +1,50 @@
+{
+  "scenario_id": "sc01",
+  "injected_fault": "Step 1 (LLM triage) returned ambiguous priority label causing wrong routing downstream",
+  "expected_root_cause_step": 1,
+  "resolves_at": [1],
+  "trace": {
+    "schema_version": "1.0",
+    "run_id": "run-sc01",
+    "agent": "triage_agent",
+    "status": "error",
+    "steps": [
+      {
+        "step_id": 1,
+        "type": "llm_call",
+        "model": "llama-3.3-70b-versatile",
+        "side_effecting": false,
+        "causal_parents": [],
+        "status": "ok",
+        "key_outputs": {"priority": "ambiguous"}
+      },
+      {
+        "step_id": 2,
+        "type": "tool_call",
+        "tool": "get_queue",
+        "side_effecting": false,
+        "causal_parents": [1],
+        "status": "ok",
+        "key_outputs": {"queue": "default"}
+      },
+      {
+        "step_id": 3,
+        "type": "tool_call",
+        "tool": "assign_ticket",
+        "side_effecting": true,
+        "causal_parents": [1, 2],
+        "status": "ok",
+        "key_outputs": {"assigned_to": "wrong_team"}
+      },
+      {
+        "step_id": 4,
+        "type": "tool_call",
+        "tool": "send_notification",
+        "side_effecting": true,
+        "causal_parents": [3],
+        "status": "error",
+        "key_outputs": {}
+      }
+    ]
+  }
+}

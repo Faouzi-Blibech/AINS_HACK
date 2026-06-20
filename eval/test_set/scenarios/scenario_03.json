@@ -1,0 +1,59 @@
+{
+  "scenario_id": "sc03",
+  "injected_fault": "Step 3 (fetch_context) returned incomplete context causing the summarizer to produce a wrong summary",
+  "expected_root_cause_step": 3,
+  "resolves_at": [3],
+  "trace": {
+    "schema_version": "1.0",
+    "run_id": "run-sc03",
+    "agent": "summarizer_agent",
+    "status": "error",
+    "steps": [
+      {
+        "step_id": 1,
+        "type": "llm_call",
+        "model": "llama-3.3-70b-versatile",
+        "side_effecting": false,
+        "causal_parents": [],
+        "status": "ok",
+        "key_outputs": {"plan": "fetch_and_summarize"}
+      },
+      {
+        "step_id": 2,
+        "type": "tool_call",
+        "tool": "list_tickets",
+        "side_effecting": false,
+        "causal_parents": [1],
+        "status": "ok",
+        "key_outputs": {"ticket_ids": ["T1", "T2", "T3"]}
+      },
+      {
+        "step_id": 3,
+        "type": "tool_call",
+        "tool": "fetch_context",
+        "side_effecting": false,
+        "causal_parents": [2],
+        "status": "ok",
+        "key_outputs": {"context": "truncated_data"}
+      },
+      {
+        "step_id": 4,
+        "type": "llm_call",
+        "model": "llama-3.3-70b-versatile",
+        "side_effecting": false,
+        "causal_parents": [3],
+        "status": "ok",
+        "key_outputs": {"summary": "incomplete_summary"}
+      },
+      {
+        "step_id": 5,
+        "type": "tool_call",
+        "tool": "post_summary",
+        "side_effecting": true,
+        "causal_parents": [4],
+        "status": "error",
+        "key_outputs": {}
+      }
+    ]
+  }
+}

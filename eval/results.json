@@ -1,0 +1,51 @@
+{
+  "generated_at": "2026-06-20T22:34:15.522975+00:00",
+  "metrics": [
+    {
+      "key": "determinism_rate",
+      "label": "Determinism Rate",
+      "value": 1.0,
+      "target_text": "100%",
+      "passed": true,
+      "unit": "fraction"
+    },
+    {
+      "key": "side_effect_containment",
+      "label": "Side-effect Containment",
+      "value": 0,
+      "target_text": "0",
+      "passed": true,
+      "unit": "count"
+    },
+    {
+      "key": "semantic_match_precision",
+      "label": "Semantic Match Precision",
+      "value": 0.875,
+      "target_text": "> 0.85",
+      "passed": true,
+      "unit": "fraction"
+    },
+    {
+      "key": "semantic_match_recall",
+      "label": "Semantic Match Recall",
+      "value": 1.0,
+      "target_text": "> 0.85",
+      "passed": true,
+      "unit": "fraction"
+    },
+    {
+      "key": "root_cause_accuracy",
+      "label": "Root-cause Accuracy",
+      "value": 1.0,
+      "target_text": "> 75%",
+      "passed": true,
+      "unit": "fraction"
+    }
+  ],
+  "caveats": [
+    "ScriptedReplay is a deterministic stand-in for the real divergence engine; it resolves scenarios according to a pre-specified oracle (resolves_at) rather than running actual replay. This is the intended design for the eval harness prior to the real Replayer being available.",
+    "Side-effect containment is measured honestly from ReplayOutcome.side_effect_count; ScriptedReplay always returns 0 per the safety invariant.",
+    "Semantic match P/R requires GROQ_API_KEY to be set; if absent, both values are null."
+  ],
+  "available": true
+}

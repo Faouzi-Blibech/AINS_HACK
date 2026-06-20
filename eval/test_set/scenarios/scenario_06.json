@@ -1,0 +1,59 @@
+{
+  "scenario_id": "sc06",
+  "injected_fault": "Step 3 (enrich_metadata) returned wrong category causing the classifier to pick the wrong label",
+  "expected_root_cause_step": 3,
+  "resolves_at": [3, 4],
+  "trace": {
+    "schema_version": "1.0",
+    "run_id": "run-sc06",
+    "agent": "classifier_agent",
+    "status": "error",
+    "steps": [
+      {
+        "step_id": 1,
+        "type": "llm_call",
+        "model": "llama-3.3-70b-versatile",
+        "side_effecting": false,
+        "causal_parents": [],
+        "status": "ok",
+        "key_outputs": {"action": "classify_ticket"}
+      },
+      {
+        "step_id": 2,
+        "type": "tool_call",
+        "tool": "fetch_ticket",
+        "side_effecting": false,
+        "causal_parents": [1],
+        "status": "ok",
+        "key_outputs": {"ticket_id": "T-42", "raw_text": "app crash on login"}
+      },
+      {
+        "step_id": 3,
+        "type": "tool_call",
+        "tool": "enrich_metadata",
+        "side_effecting": false,
+        "causal_parents": [2],
+        "status": "ok",
+        "key_outputs": {"category": "ui_bug_wrong"}
+      },
+      {
+        "step_id": 4,
+        "type": "llm_call",
+        "model": "llama-3.3-70b-versatile",
+        "side_effecting": false,
+        "causal_parents": [3],
+        "status": "ok",
+        "key_outputs": {"label": "ui_issue_incorrect"}
+      },
+      {
+        "step_id": 5,
+        "type": "tool_call",
+        "tool": "update_ticket",
+        "side_effecting": true,
+        "causal_parents": [4],
+        "status": "error",
+        "key_outputs": {}
+      }
+    ]
+  }
+}
