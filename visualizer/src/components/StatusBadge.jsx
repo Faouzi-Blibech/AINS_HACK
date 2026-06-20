@@ -1,18 +1,56 @@
-const STATUS_STYLES = {
-  ok: "bg-emerald-500/10 text-emerald-400 ring-emerald-500/20",
-  error: "bg-red-500/10 text-red-400 ring-red-500/20",
-  timeout: "bg-amber-500/10 text-amber-400 ring-amber-500/20",
-  aborted: "bg-zinc-500/10 text-zinc-400 ring-zinc-500/20",
+const STATUS_CONFIG = {
+  ok: {
+    color: "var(--pass)",
+    bg: "var(--pass-dim)",
+    border: "rgba(70, 217, 138, .28)",
+  },
+  error: {
+    color: "var(--fail)",
+    bg: "var(--fail-dim)",
+    border: "rgba(255, 107, 107, .26)",
+  },
+  timeout: {
+    color: "var(--warn)",
+    bg: "var(--warn-dim)",
+    border: "rgba(255, 180, 84, .28)",
+  },
+  aborted: {
+    color: "var(--fg2)",
+    bg: "var(--bg3)",
+    border: "var(--bd2)",
+  },
 };
 
 export default function StatusBadge({ status }) {
-  const style = STATUS_STYLES[status] ?? STATUS_STYLES.aborted;
+  const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.aborted;
 
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${style}`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        borderRadius: 999,
+        padding: "3px 9px",
+        font: "600 9.5px var(--mono)",
+        letterSpacing: ".08em",
+        textTransform: "uppercase",
+        color: cfg.color,
+        background: cfg.bg,
+        border: `1px solid ${cfg.border}`,
+        whiteSpace: "nowrap",
+      }}
     >
-      <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
+      <span
+        style={{
+          width: 5,
+          height: 5,
+          borderRadius: "50%",
+          background: cfg.color,
+          flex: "none",
+          opacity: 0.85,
+        }}
+      />
       {status}
     </span>
   );
