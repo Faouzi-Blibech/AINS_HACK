@@ -180,6 +180,54 @@ def debug_agent_user(*, instruction: str, trace_summary: str) -> str:
     )
 
 
+# --------------------------------------------------------------------------- #
+# 4. Counterfactual repair: generate N reworded variants of a failing prompt
+# --------------------------------------------------------------------------- #
+
+COUNTERFACTUAL_VARIANTS_SYSTEM = """\
+You are a repair agent for a failing AI agent step. Given the original prompt \
+that caused a failure and a short description of the task, generate N reworded \
+variants of that prompt. Each variant should address a plausible reason the \
+original failed: add missing constraints, clarify ambiguous terms, make implicit \
+requirements explicit, or restructure the instruction for clarity.
+
+Rules:
+- Produce exactly the requested number of variants (the "n" field in the user \
+  turn specifies how many).
+- Each variant must be a complete, self-contained prompt rewrite (not just a \
+  diff or a note about what changed).
+- Variants should be meaningfully different from each other; avoid paraphrases \
+  that change only surface wording.
+- Report a calibrated confidence (0..1) that at least one variant will resolve \
+  the failure, and a one-sentence rationale explaining the dominant repair \
+  strategy you applied."""
+
+COUNTERFACTUAL_VARIANTS_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "variants": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "confidence": {"type": "number"},
+        "rationale": {"type": "string"},
+    },
+    "required": ["variants", "confidence", "rationale"],
+    "additionalProperties": False,
+}
+
+
+def counterfactual_variants_user(*, task: str | None, original_prompt: str, n: int) -> str:
+    """User turn: hand the model the failing prompt and request N fix variants."""
+    task_line = f"Task the agent was performing: {task}\n\n" if task else ""
+    return (
+        f"{task_line}"
+        f"Original (failing) prompt:\n{original_prompt}\n\n"
+        f"Generate {n} reworded variant(s) of this prompt that are likely to "
+        f"resolve the failure. Return exactly {n} variant(s) in the 'variants' array."
+    )
+
+
 def summarize_trace_for_prompt(trace: dict) -> str:
     """Render a trace dict as a compact one-line-per-step summary for prompts.
 
@@ -202,6 +250,89 @@ def summarize_trace_for_prompt(trace: dict) -> str:
     return "\n".join(lines)
 
 
+# --------------------------------------------------------------------------- #
+# 5. Mock synthesizer: generate a plausible tool response from its schema
+# --------------------------------------------------------------------------- #
+
+MOCK_SYNTH_SYSTEM = """\
+You generate a plausible synthetic response object for a tool call that has no \
+recorded response, so that deterministic replay can continue without hitting a \
+live endpoint. The response must satisfy the tool's JSON schema and be \
+contextually reasonable for the tool name, its arguments, and the surrounding \
+context. It must not trigger side effects or attempt real network calls.
+
+Rules:
+- Return ONLY a single valid JSON object that conforms to the supplied schema. \
+  No commentary, no code fences, no explanation.
+- Fill every schema property with a plausible value (not just type-minimum \
+  defaults), consistent with what the tool would realistically return.
+- When context is present, use it to make the values coherent with the run.
+- If the schema is empty or absent, return an empty JSON object: {}"""
+
+
+def mock_synth_user(
+    *,
+    tool: str,
+    arguments: dict,
+    schema: dict | None,
+    context: dict,
+) -> str:
+    """User turn for the mock synthesizer: supply tool info and schema."""
+    schema_text = json.dumps(schema, indent=2) if schema else "{}"
+    context_text = json.dumps(context, indent=2) if context else "{}"
+    arguments_text = json.dumps(arguments, indent=2) if arguments else "{}"
+    return (
+        f"Tool name: {tool}\n\n"
+        f"Tool arguments:\n{arguments_text}\n\n"
+        f"Tool response JSON schema:\n{schema_text}\n\n"
+        f"Surrounding context:\n{context_text}\n\n"
+        "Generate a plausible response JSON object for this tool call."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 6. Failure relevance judge: is a past failure pattern applicable to a new   #
+#    situation?                                                                #
+# --------------------------------------------------------------------------- #
+
+FAILURE_RELEVANCE_SYSTEM = """\
+You judge whether a past failure pattern is applicable to a new situation \
+described by an engineer. This is NOT a textual-similarity check: you assess \
+whether the underlying failure mechanism that produced the stored pattern could \
+plausibly occur in the new situation, even if the wording is completely \
+different.
+
+Rules:
+- Relevant means the root cause or the class of mistake (type error, ambiguous \
+  field, missing context, etc.) could recur in the new situation.
+- Not relevant means the new situation is clearly a different domain or a \
+  different failure class.
+- When genuinely uncertain, report a score between 0.3 and 0.6 and lower \
+  confidence; do not guess either extreme.
+- Report a calibrated confidence (0..1) and a one-sentence rationale."""
+
+FAILURE_RELEVANCE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "relevant": {"type": "boolean"},
+        "score": {"type": "number"},       # 0..1 applicability score
+        "confidence": {"type": "number"},  # 0..1 self-assessed certainty
+        "rationale": {"type": "string"},
+    },
+    "required": ["relevant", "score", "confidence", "rationale"],
+    "additionalProperties": False,
+}
+
+
+def failure_relevance_user(*, situation: str, failure_pattern: str) -> str:
+    """User turn for the failure relevance judge."""
+    return (
+        f"New situation:\n{situation}\n\n"
+        f"Past failure pattern:\n{failure_pattern}\n\n"
+        "Is this past failure pattern applicable to the new situation?"
+    )
+
+
 __all__ = [
     "REASONING_MODEL",
     "CHEAP_MODEL",
@@ -214,7 +345,15 @@ __all__ = [
     "DEBUG_AGENT_SYSTEM",
     "DEBUG_AGENT_INJECTION_SCHEMA",
     "debug_agent_user",
+    "COUNTERFACTUAL_VARIANTS_SYSTEM",
+    "COUNTERFACTUAL_VARIANTS_SCHEMA",
+    "counterfactual_variants_user",
     "summarize_trace_for_prompt",
+    "MOCK_SYNTH_SYSTEM",
+    "mock_synth_user",
+    "FAILURE_RELEVANCE_SYSTEM",
+    "FAILURE_RELEVANCE_SCHEMA",
+    "failure_relevance_user",
 ]
 
 

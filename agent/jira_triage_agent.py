@@ -57,23 +57,34 @@ def _load_dotenv() -> None:
                 os.environ.setdefault(key.strip(), val.strip().strip("'\""))
 
 
-def _llm_triage(ticket: Ticket) -> dict:
-    """The single LLM call: draft the triage decision + reporter email."""
+def _llm_triage(ticket: Ticket, preventive_note: str | None = None) -> dict:
+    """The single LLM call: draft the triage decision + reporter email.
+
+    Parameters
+    ----------
+    ticket:
+        The Jira ticket to triage.
+    preventive_note:
+        Optional string injected into the system prompt before the agent runs.
+        When None or empty, behavior is identical to the original implementation.
+    """
     _load_dotenv()
     api_key = os.environ.get("GROQ_API_KEY")
     if api_key:
         try:
-            return _llm_triage_live(ticket, api_key)
+            return _llm_triage_live(ticket, api_key, preventive_note=preventive_note)
         except Exception as exc:  # degrade to offline, never crash the demo
             print(f"  [llm] live call failed ({exc}); using offline draft")
-    return _llm_triage_offline(ticket)
+    return _llm_triage_offline(ticket, preventive_note=preventive_note)
 
 
-def _llm_triage_live(ticket: Ticket, api_key: str) -> dict:
+def _llm_triage_live(ticket: Ticket, api_key: str, *, preventive_note: str | None = None) -> dict:
     system = (
         "You triage Jira tickets. Return STRICT JSON with keys: intent, "
         "email_subject, email_body. Be concise."
     )
+    if preventive_note:
+        system = preventive_note + "\n\n" + system
     user = (
         f"Ticket {ticket.key}\nSummary: {ticket.summary}\n"
         f"Description: {ticket.description}\nReporter: {ticket.reporter}\n"
@@ -98,8 +109,8 @@ def _llm_triage_live(ticket: Ticket, api_key: str) -> dict:
     return json.loads(resp.json()["choices"][0]["message"]["content"])
 
 
-def _llm_triage_offline(ticket: Ticket) -> dict:
-    return {
+def _llm_triage_offline(ticket: Ticket, *, preventive_note: str | None = None) -> dict:
+    draft: dict = {
         "intent": "Routine ticket; route by reported priority and notify reporter.",
         "email_subject": f"Re: {ticket.key} - logged",
         "email_body": (
@@ -107,6 +118,9 @@ def _llm_triage_offline(ticket: Ticket) -> dict:
             "has been placed in the general queue. Please do not escalate."
         ),
     }
+    if preventive_note:
+        draft["preventive_applied"] = True
+    return draft
 
 
 def _resolve_priority(raw: str) -> str:
@@ -156,8 +170,20 @@ def _route(priority: str) -> str:
     return _ROUTING.get(priority, "General Triage Queue")
 
 
-def run(ticket: Ticket, *, verbose: bool = True) -> dict:
-    """Run the triage loop: llm_call -> get_priority -> assign_ticket -> send_email."""
+def run(ticket: Ticket, *, verbose: bool = True, preventive_note: str | None = None) -> dict:
+    """Run the triage loop: llm_call -> get_priority -> assign_ticket -> send_email.
+
+    Parameters
+    ----------
+    ticket:
+        The Jira ticket to triage.
+    verbose:
+        When True, print step-by-step progress to stdout.
+    preventive_note:
+        Optional warning string from the failure library. When provided, it is
+        prepended to the system prompt so the LLM is aware of prior failures.
+        Default None leaves existing behavior byte-for-byte unchanged.
+    """
     def log(step, kind, label, detail):
         if verbose:
             tag = " [side-effecting]" if label in SIDE_EFFECTING_TOOLS else ""
@@ -166,7 +192,7 @@ def run(ticket: Ticket, *, verbose: bool = True) -> dict:
     if verbose:
         print(f"Triage run for {ticket.key}: {ticket.summary!r}")
 
-    draft = _llm_triage(ticket)
+    draft = _llm_triage(ticket, preventive_note)
     log(1, "llm_call", AGENT_MODEL, draft["intent"])
 
     priority = get_priority(ticket)
