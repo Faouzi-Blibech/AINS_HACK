@@ -138,9 +138,9 @@ class ResolvedStepDetail(Step):
         default=None,
         description="Resolved content of response_blob (llm_call only).",
     )
-    args: Optional[dict[str, Any]] = Field(
+    args: Optional[Any] = Field(
         default=None,
-        description="Resolved content of args_blob (tool_call only).",
+        description="Resolved content of args_blob (tool_call only); JSON of any shape.",
     )
     result: Optional[Any] = Field(
         default=None,
@@ -214,6 +214,10 @@ class CounterfactualResponse(BaseModel):
 
 
 class FailureLibraryEntry(BaseModel):
+    id: Optional[str] = Field(
+        default=None,
+        description="Stable reference label for the pattern, e.g. 'FM-014'.",
+    )
     failure_pattern: str
     blame_step: int
     fix_that_worked: str

@@ -230,3 +230,7 @@ __marimo__/
 visualizer/node_modules/
 visualizer/dist/
 .gstack/
+
+# Cassette API - seeded SQLite database (generated at runtime, never commit)
+api/*.sqlite3
+api/*.sqlite3-journal

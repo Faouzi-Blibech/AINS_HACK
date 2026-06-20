@@ -1,7 +1,123 @@
 @import "tailwindcss";
 
+:root, [data-theme="dark"] {
+  --ui: 'Geist', 'Helvetica Neue', sans-serif;
+  --mono: 'Geist Mono', ui-monospace, monospace;
+  --bg0: #080b14;
+  --bg1: #0d1120;
+  --bg2: #121829;
+  --bg3: #1a2238;
+  --hover: #212c47;
+  --bd: #212a42;
+  --bd2: #2e3a59;
+  --bd3: #3d4b70;
+  --fg0: #eef1fb;
+  --fg1: #98a2c0;
+  --fg2: #5f6a8a;
+  --accent: #33e1d4;
+  --accent2: #79f0e7;
+  --accent-dim: rgba(51, 225, 212, .13);
+  --accent-bd: rgba(51, 225, 212, .42);
+  --brand: linear-gradient(135deg, #8b7bff 0%, #33e1d4 100%);
+  --pass: #46d98a;
+  --pass-dim: rgba(70, 217, 138, .14);
+  --fail: #ff6b6b;
+  --fail-dim: rgba(255, 107, 107, .13);
+  --warn: #ffb454;
+  --warn-dim: rgba(255, 180, 84, .14);
+  --rec: #ff5a5a;
+  --innocent: #56638a;
+  --contrib: #ffb454;
+  --root: #ff6b6b;
+  --cstr: #7fe6c0;
+  --cnum: #7cd6ff;
+  --ckey: #b3a8ff;
+  --glow: 0 0 0 1px var(--accent-bd), 0 0 24px rgba(51, 225, 212, .18);
+  --shadow: 0 2px 6px rgba(0, 0, 0, .4), 0 18px 48px rgba(0, 0, 0, .46);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, .35), 0 6px 18px rgba(0, 0, 0, .3);
+}
+
+[data-theme="light"] {
+  --bg0: #eef1f8;
+  --bg1: #ffffff;
+  --bg2: #ffffff;
+  --bg3: #f1f4fb;
+  --hover: #e8edf7;
+  --bd: #e3e8f2;
+  --bd2: #d3dbeb;
+  --bd3: #bcc7df;
+  --fg0: #0f1626;
+  --fg1: #566081;
+  --fg2: #8b94ac;
+  --accent: #10b3a8;
+  --accent2: #0a8d84;
+  --accent-dim: rgba(16, 179, 168, .10);
+  --accent-bd: rgba(16, 179, 168, .34);
+  --brand: linear-gradient(135deg, #6a5cff 0%, #10b3a8 100%);
+  --pass: #15a45c;
+  --pass-dim: rgba(21, 164, 92, .11);
+  --fail: #e04848;
+  --fail-dim: rgba(224, 72, 72, .09);
+  --warn: #c47a10;
+  --warn-dim: rgba(196, 122, 16, .11);
+  --rec: #dd3b3b;
+  --innocent: #97a1b9;
+  --contrib: #c47a10;
+  --root: #e04848;
+  --cstr: #0a8f6a;
+  --cnum: #1170c4;
+  --ckey: #5b4ae8;
+  --glow: 0 0 0 1px var(--accent-bd), 0 0 18px rgba(16, 179, 168, .14);
+  --shadow: 0 2px 6px rgba(30, 40, 70, .07), 0 16px 40px rgba(30, 40, 70, .10);
+  --shadow-sm: 0 1px 3px rgba(30, 40, 70, .06), 0 5px 16px rgba(30, 40, 70, .07);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
+  background: var(--bg0);
+  color: var(--fg0);
+  font-family: var(--ui);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
+
+code, pre, kbd, samp, .mono {
+  font-family: var(--mono);
+}
+
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--bd2);
+  border-radius: 9px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--bd3);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::selection {
+  background: var(--accent-dim);
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--fg2);
+}
+
+@keyframes reelspin { to { transform: rotate(360deg); } }
+@keyframes recpulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+@keyframes glowpulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes fadeup { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes pop { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes dashflow { to { stroke-dashoffset: -16; } }
