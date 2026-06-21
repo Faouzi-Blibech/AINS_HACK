@@ -13,7 +13,7 @@ from pathlib import Path
 from mitmproxy import http, options
 from mitmproxy.tools.dump import DumpMaster
 
-from recorder.capture import build_step, request_identity
+from recorder.capture import build_step, compute_identity
 from recorder.policy import load_policy
 from trace_store.store import TraceStore
 from replay_engine.replay import Replayer
@@ -94,7 +94,6 @@ class ReplayAddon:
     def __init__(self, replayer, policy) -> None:
         self.replayer = replayer
         self.policy = policy
-        self._volatile = policy.volatile_fields()
         self.served = self.divergences = 0
 
     def request(self, flow) -> None:
@@ -103,8 +102,8 @@ class ReplayAddon:
                 502, b'{"error":"blocked: non-recordable host during replay"}',
                 {"Content-Type": "application/json"})
             return
-        ident = request_identity(flow.request.method, flow.request.url,
-                                 _body_text(flow.request), self._volatile)
+        ident = compute_identity(flow.request.method, flow.request.url,
+                                 _body_text(flow.request), self.policy)
         resp = self.replayer.response_for(ident)
         if resp is None:
             self.divergences += 1

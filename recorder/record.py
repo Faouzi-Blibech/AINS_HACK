@@ -28,6 +28,8 @@ def main(argv=None) -> int:
     ap.add_argument("--port", type=int, default=8899)
     ap.add_argument("--demo", action="store_true",
                     help="hermetic demo: start the mock upstream and record the Jira agent")
+    ap.add_argument("--mcp", action="store_true",
+                    help="with --demo: record the MCP-over-HTTP agent instead of the REST one")
     ap.add_argument("command", nargs=argparse.REMAINDER, help="-- <command> to run your agent")
     args = ap.parse_args(argv)
 
@@ -38,10 +40,14 @@ def main(argv=None) -> int:
     if args.demo and not cmd:
         from recorder.mock_upstream import serve
         server, base = serve(0)
-        sub_env["CASSETTE_TOOLS_URL"] = base
-        sub_env["CASSETTE_LLM_URL"] = f"{base}/v1/chat/completions"
-        sub_env.setdefault("GROQ_API_KEY", "demo-key")
-        cmd = [sys.executable, "agent/jira_triage_agent.py"]
+        if args.mcp:
+            sub_env["CASSETTE_MCP_URL"] = f"{base}/mcp"
+            cmd = [sys.executable, "agent/mcp_jira_agent.py"]
+        else:
+            sub_env["CASSETTE_TOOLS_URL"] = base
+            sub_env["CASSETTE_LLM_URL"] = f"{base}/v1/chat/completions"
+            sub_env.setdefault("GROQ_API_KEY", "demo-key")
+            cmd = [sys.executable, "agent/jira_triage_agent.py"]
 
     if not cmd:
         ap.error("provide a command after -- (or use --demo)")
