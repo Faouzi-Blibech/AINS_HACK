@@ -65,17 +65,24 @@ class _ProxyBase:
 
 
 class CaptureAddon:
-    def __init__(self, store: TraceStore, run_id: str, policy) -> None:
+    def __init__(self, store: TraceStore, run_id: str, policy, step_id_source=None) -> None:
         self.store, self.run_id, self.policy = store, run_id, policy
         self.step_id = 0
+        self._step_id_source = step_id_source
+
+    def _next_id(self) -> int:
+        if self._step_id_source is not None:
+            return self._step_id_source()
+        self.step_id += 1
+        return self.step_id
 
     def response(self, flow) -> None:
         if not self.policy.should_record(flow.request.host):
             return
-        self.step_id += 1
+        sid = self._next_id()
         step = build_step(
-            step_id=self.step_id,
-            prev_step_id=self.step_id - 1 if self.step_id > 1 else None,
+            step_id=sid,
+            prev_step_id=sid - 1 if sid > 1 else None,
             method=flow.request.method,
             url=flow.request.url,
             req_body=_body_text(flow.request),
@@ -126,15 +133,16 @@ class ReplayAddon:
 
 
 class Recorder(_ProxyBase):
-    def __init__(self, run_id: str, *, port: int = 8899, store: TraceStore | None = None, policy=None) -> None:
+    def __init__(self, run_id: str, *, port: int = 8899, store: TraceStore | None = None, policy=None, step_id_source=None) -> None:
         super().__init__(port=port)
         self.run_id = run_id
         self.store = store or TraceStore()
         self.policy = policy or load_policy()
+        self._step_id_source = step_id_source
         self._t0 = time.time()
 
     def _make_addon(self):
-        return CaptureAddon(self.store, self.run_id, self.policy)
+        return CaptureAddon(self.store, self.run_id, self.policy, step_id_source=self._step_id_source)
 
     def start(self) -> "Recorder":
         self.store.start_run(self.run_id, agent="", mode="record",

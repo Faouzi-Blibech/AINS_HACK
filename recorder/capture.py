@@ -6,6 +6,7 @@ import json
 from urllib.parse import urlsplit
 
 from recorder import mcp_proxy
+from recorder.mcp_proxy import _strip_volatile
 from recorder.policy import Policy
 from trace_store.blob_store import store_blob
 
@@ -85,3 +86,33 @@ def build_step(*, step_id, prev_step_id, method, url, req_body, status_code,
         step["args_blob"] = req_blob
         step["result_blob"] = resp_blob
     return step
+
+
+def sdk_identity(tool: str, args: dict, volatile: list[str]) -> str:
+    """Id for a native (SDK) tool call: tool name + canonical, volatile-stripped args."""
+    stripped = _strip_volatile(args or {}, set(volatile)) if volatile else (args or {})
+    blob = json.dumps(stripped, sort_keys=True, separators=(",", ":")).encode()
+    return f"sdk {tool}\n{hashlib.sha256(blob).hexdigest()}"
+
+
+def build_sdk_step(*, step_id, prev_step_id, tool, args, result, side_effecting,
+                   latency_ms, ts_ms, policy: Policy) -> dict:
+    args = args or {}
+    args_blob = store_blob(policy.redact_body(json.dumps(args, default=str)))
+    result_blob = store_blob(policy.redact_body(json.dumps(result, default=str)))
+    return {
+        "step_id": step_id,
+        "type": "tool_call",
+        "transport": "sdk",
+        "timestamp_ms": ts_ms,
+        "latency_ms": latency_ms,
+        "status": "ok",
+        "status_code": 200,
+        "side_effecting": side_effecting,
+        "confidence": None,
+        "causal_parents": [prev_step_id] if prev_step_id else [],
+        "tool": tool,
+        "args_blob": args_blob,
+        "result_blob": result_blob,
+        "request_identity": sdk_identity(tool, args, policy.volatile_fields()),
+    }

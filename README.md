@@ -44,10 +44,27 @@ No single interception point covers how modern agents call tools. Cassette inter
 | Mode | Intercepts | How |
 |---|---|---|
 | **HTTP/TLS proxy** | LLM API calls + REST tool calls | Route agent traffic through a local proxy |
-| **MCP proxy** | MCP-protocol tool calls (Jira, Confluence, …) | Wrap the MCP client layer |
-| **SDK hooks** | Native function-calling tools wired via SDK | Decorator / middleware on tool definitions |
+| **MCP proxy** | MCP-protocol tool calls (Jira, Confluence, …) | JSON-RPC envelope detection on the same proxy (no second interception point) |
+| **SDK hooks** | Native function-calling tools wired via SDK | `@record_tool` decorator + in-process recording session |
 
-The HTTP record path is implemented: an agent-agnostic mitmproxy forward proxy with per-process CA trust (never the system store) and secret redaction on capture. Run the hermetic end-to-end demo with `python -m recorder.record --demo`.
+**All three interception transports are implemented, and the agent is never modified.** HTTP
+and MCP are captured transparently by an agent-agnostic mitmproxy forward proxy (per-process CA
+trust, never the system store; secret redaction on capture). SDK (native function) tools have
+no network seam, so the hook is installed **from outside the agent at runtime** —
+install-from-outside instrumentation, the same approach as OpenTelemetry — wrapping the tool
+callables before the run and restoring them after. An in-process recording session shares one
+step-id sequence with the proxy, so a single run records all three transports into one trace
+with the agent's source untouched.
+
+```bash
+python -m recorder.record --demo               # hermetic HTTP-only demo (subprocess proxy)
+python -m recorder.record --demo --mcp         # MCP-over-HTTP demo
+python -m recorder.record_session --demo       # all 3 transports (http+mcp+sdk) in one run
+python -m recorder.record_session --demo --replay   # then replay from tape (zero live calls)
+```
+
+Replay hits zero live endpoints; side-effecting MCP and SDK tools are served from tape but
+never executed (`live_executed: 0`, `divergences: 0`).
 
 ---
 
@@ -174,7 +191,11 @@ Each module has its own `README.md` describing its responsibility and interface.
 
 ## 10. Status
 
-First submission: concept and prototype foundation. The repository establishes the architecture, the shared trace contract, the module boundaries, and the evaluation plan. Module skeletons are in place; the working prototype follows for the final submission.
+The recording/replay spine is working end to end: record → store → deterministic replay over
+**all three transports** (HTTP, MCP, SDK), captured into one schema-valid trace and replayed
+with zero live endpoints and side-effect containment (`live_executed: 0`). The architecture,
+shared trace contract, module boundaries, and evaluation plan are in place; the AI analysis
+layer and UI build on this substrate for the final submission.
 
 ---
 
