@@ -57,3 +57,46 @@ tools served but never executed (`live_executed: 0`), `divergences: 0`.
 stdio-transport MCP servers (subprocess JSON-RPC over stdin/stdout) are a
 documented follow-up: the JSON-RPC parsing in `mcp_proxy.py` is transport-neutral
 and reusable, but stdio needs a separate stream shim rather than the HTTP proxy.
+
+## SDK hooks — the third transport (implemented, agent stays untouched)
+
+Native function-calling tools never touch the network, so the proxy cannot see them. The hook
+is therefore installed **from outside the agent at runtime** — install-from-outside
+instrumentation, the same approach as OpenTelemetry/`wrapt` — so the agent's source is never
+modified. `sdk_hooks.py` provides the underlying wrapper `record_tool(side_effecting=...)`, a
+**framework-neutral** wrapper for any Python callable:
+
+- **No active recording session** → pure passthrough (one contextvar read); the tool runs
+  normally with ~zero overhead.
+- **Record** → run the tool, then store an `sdk` `tool_call` step (args + result redacted via
+  `policy.redact_body`, large payloads to the blob store), keyed by the same transport-router
+  identity used by HTTP/MCP (`capture.sdk_identity`, with `volatile_fields` stripping).
+- **Replay** → serve the recorded result and **never execute the function**; a side-effecting
+  tool is never run in replay even on a cache miss (fail closed → `ReplayDivergence`).
+
+Sync and async tools are both supported. `record_tool` is also available as an **opt-in**
+decorator for teams who prefer an explicit annotation, but the default path applies it
+externally (see the driver below), so no agent change is required.
+
+### Single recorder for all three transports
+
+Because SDK interception is in-process, `session.py` holds a `RecordingSession` in a
+`contextvars` variable — the single source of truth for a run (mode, store, run_id, policy,
+and a thread-safe **shared step-id allocator**). The HTTP/MCP mitmproxy thread pulls step-ids
+from that same allocator (`CaptureAddon`/`Recorder` accept a `step_id_source`), so all three
+transports land in **one trace** with one collision-free step sequence.
+
+`record_session.py` is the agent-agnostic in-process driver. It loads the agent by
+`"module:function"` (so `recorder/` keeps zero `agent/` imports), **transparently instruments
+the named SDK tools** by reassigning their module attributes to recorded wrappers before the
+run and restoring them afterward (`_instrument_sdk`/`_restore_sdk` + the `sdk_tools` arg), starts
+the proxy thread bound to the session's store, runs the agent in-process, and prints the unified
+trace (record) or a merged replay report. The demo agent (`agent/full_stack_agent.py`) has zero
+Cassette imports — a test asserts this. Hermetic 3-transport demo:
+
+    python -m recorder.record_session --demo            # record http+mcp+sdk in one run
+    python -m recorder.record_session --demo --replay   # then replay from tape
+
+Replay shuts the upstream first and reports `live_executed: 0`, `divergences: 0`,
+`served == recorded_steps` — side-effecting MCP and SDK tools are served from tape but never
+executed.
