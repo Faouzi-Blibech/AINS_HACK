@@ -1,0 +1,37 @@
+# Version control
+.git
+.gitignore
+
+# Python artifacts
+.venv
+venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node artifacts
+node_modules/
+visualizer/node_modules/
+visualizer/dist/
+dist/
+
+# Build outputs and graph data
+graphify-out/
+.gstack/
+
+# Database files (seeded at runtime; never bake sqlite data into the image)
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+
+# Sensitive and project-internal files
+.env
+CONTEXT.md
+WORK_DISTRIBUTION.md
+ai_agents/docs/
+
+# UI design assets
+ui design/
+
+# NOTE: docs/ is NOT excluded (the api image needs docs/fixtures/ for seeding).
+# NOTE: eval/ is NOT excluded (the /eval endpoint reads eval/results.json).
