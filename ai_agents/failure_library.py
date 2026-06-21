@@ -88,6 +88,10 @@ class FailureLibrary(Protocol):
 # Seed data (mirroring the 3 patterns from api/failure_memory.py without importing it)
 # ---------------------------------------------------------------------------
 
+# NOTE: SeedFailureLibrary is the swap seam. A persistent SQLite store is the
+# intended future backend; replace SeedFailureLibrary with it without changing
+# any call sites (all callers depend only on the FailureLibrary Protocol).
+
 SEED_ENTRIES: list[FailureEntry] = [
     FailureEntry(
         id="FM-014",
@@ -131,6 +135,40 @@ SEED_ENTRIES: list[FailureEntry] = [
         ),
         agent_config="v2.4.0",
         determinism_rate=0.78,
+    ),
+    FailureEntry(
+        id="FM-031",
+        failure_pattern=(
+            "tool-call timeout misclassified as successful empty result: "
+            "the tool_call step returned no data after timing out, but the "
+            "agent treated the empty response as a valid result and proceeded "
+            "on missing data, producing a silently incorrect downstream decision"
+        ),
+        blame_step=4,
+        fix_that_worked=(
+            "treat any timeout response from the tool layer as an explicit "
+            "error; raise a ToolTimeoutError instead of coercing to empty "
+            "success, and halt the pipeline until the caller handles the error"
+        ),
+        agent_config="v2.5.0",
+        determinism_rate=0.88,
+    ),
+    FailureEntry(
+        id="FM-045",
+        failure_pattern=(
+            "stale over-broad context caused over-escalation: an unfiltered "
+            "prior high-severity incident was included in the retrieved context "
+            "for a routine ticket, causing the agent to escalate it to the "
+            "on-call team unnecessarily"
+        ),
+        blame_step=2,
+        fix_that_worked=(
+            "scope the retrieved context to the current ticket category and "
+            "recency before the triage call; filter out incidents whose "
+            "severity or category does not match the ticket being processed"
+        ),
+        agent_config="v2.5.1",
+        determinism_rate=0.74,
     ),
 ]
 

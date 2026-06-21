@@ -24,16 +24,16 @@ from ai_agents.confidence import AIResult
 # ---------------------------------------------------------------------------
 
 
-def test_seed_library_returns_three_entries():
+def test_seed_library_returns_five_entries():
     lib = SeedFailureLibrary()
     entries = lib.all()
-    assert len(entries) == 3
+    assert len(entries) == 5
 
 
 def test_seed_library_entry_ids():
     lib = SeedFailureLibrary()
     ids = {e.id for e in lib.all()}
-    assert ids == {"FM-014", "FM-007", "FM-021"}
+    assert ids == {"FM-014", "FM-007", "FM-021", "FM-031", "FM-045"}
 
 
 def test_seed_library_blame_steps():
@@ -53,6 +53,22 @@ def test_seed_library_entries_are_failure_entry():
 def test_seed_library_satisfies_protocol():
     lib = SeedFailureLibrary()
     assert isinstance(lib, FailureLibrary)
+
+
+def test_seed_library_five_entries_unique_ids_valid_fields():
+    """SeedFailureLibrary must return 5 entries with unique ids and valid typed fields."""
+    lib = SeedFailureLibrary()
+    entries = lib.all()
+    assert len(entries) == 5
+    ids = [e.id for e in entries]
+    assert len(set(ids)) == 5, "All entry ids must be unique"
+    for entry in entries:
+        assert isinstance(entry.blame_step, int), f"{entry.id}: blame_step must be int"
+        assert isinstance(entry.determinism_rate, float), f"{entry.id}: determinism_rate must be float"
+        assert 0.0 <= entry.determinism_rate <= 1.0, f"{entry.id}: determinism_rate out of [0,1]"
+        assert isinstance(entry.failure_pattern, str) and entry.failure_pattern
+        assert isinstance(entry.fix_that_worked, str) and entry.fix_that_worked
+        assert isinstance(entry.agent_config, str) and entry.agent_config
 
 
 def test_failure_entry_fields():
@@ -115,7 +131,7 @@ def test_relevant_failures_k_default():
         return (True, 0.5, 0.7, "ok")
 
     result = relevant_failures(lib, "anything", judge=judge)
-    # Default k=3 and seed has 3 entries
+    # Default k=3; seed now has 5 entries but k caps the result at 3
     assert len(result.value) <= 3
 
 
@@ -197,8 +213,8 @@ def test_default_judge_llm_path(monkeypatch):
     assert result.value[0][0].id == "FM-014"
     assert result.value[0][1] > 0.5
     assert 0.0 <= result.confidence <= 1.0
-    # LLM was called once per entry (3 entries)
-    assert call_count[0] == 3
+    # LLM was called once per entry (5 entries)
+    assert call_count[0] == 5
 
 
 # ---------------------------------------------------------------------------
