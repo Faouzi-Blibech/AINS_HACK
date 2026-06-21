@@ -1,0 +1,9 @@
+# Cassette API runtime dependencies (minimal subset)
+# This file contains only the third-party packages required by the served API (api.app).
+# The full requirements.txt includes additional tools (recorder, proxy, MCP, tests) not needed at runtime.
+
+fastapi
+uvicorn[standard]
+pydantic
+httpx
+python-dotenv

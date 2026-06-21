@@ -5,6 +5,14 @@
 **AINS Hackathon 2026 · AI for Enterprise Automation · Use Case 2**
 First submission: Concept & Prototype Foundation.
 
+## Quickstart
+
+1. Clone the repo and cd into it.
+2. Run `docker compose up` (no API key needed; the demo replays bundled recordings).
+3. Open `http://localhost:5173` in your browser.
+
+To record new traces, add a `GROQ_API_KEY` to `.env` (see `.env.example`).
+
 ---
 
 ## 1. The problem
