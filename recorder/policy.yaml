@@ -4,5 +4,7 @@ llm:
   path_patterns: ["/chat/completions", "/messages", "/v1/responses"]
 read_only_methods: ["GET", "HEAD", "OPTIONS"]
 read_only_paths: ["/get_priority"]   # read-only tools that use POST
+mcp:
+  read_only_tools: ["get_priority", "get_issue", "search_issues", "list_projects"]
 redact_fields: ["authorization", "api_key", "api-key", "x-api-key", "password", "secret", "token"]
 volatile_fields: ["idempotency_key", "request_id", "timestamp", "created"]

@@ -5,7 +5,7 @@ The transparent proxy that captures a live run without changing the agent. Proxy
 | File | Mode | Intercepts |
 |---|---|---|
 | `http_proxy.py` | HTTP/TLS proxy | LLM API calls + REST tool calls |
-| `mcp_proxy.py` | MCP proxy | MCP-protocol tool calls (Jira, Confluence) |
+| `mcp_proxy.py` | MCP transport router | MCP-protocol tool calls (Jira, Confluence) |
 | `sdk_hooks.py` | SDK hooks | Native function-calling tools wired via SDK |
 
 Each captured call becomes a step written to the trace store, with large payloads pushed to the blob store. The same code paths run in two directions: in **record** mode they forward to the live endpoint and capture the response; in **play** mode they return the recorded response and never forward.
@@ -29,3 +29,31 @@ never executed (`live_executed` stays 0), and a faithful replay reports
 `divergences: 0`. For an arbitrary recorded run:
 
     python -m recorder.replay --run-id NAME --tape tape.sqlite3 --blob-dir blobs -- <agent cmd>
+
+## MCP record + replay (implemented)
+
+MCP over Streamable HTTP is JSON-RPC 2.0 carried as HTTP POST bodies, so it
+rides the same real proxy: no second interception point. `mcp_proxy.py` is the
+MCP half of a transport router. `capture.compute_identity` (shared by record and
+replay) detects a JSON-RPC envelope, tags the step `transport: "mcp"`, pulls the
+real tool name + arguments from `params` (not the URL path, since every
+`tools/call` hits one endpoint), and builds an **id-independent identity** so a
+replayed handshake, which issues fresh JSON-RPC ids, still matches the tape. The
+identity also strips `policy.yaml` `volatile_fields` from the arguments at any
+depth (same as the HTTP path), so a tool that takes a per-call timestamp or
+nonce still replays without a false divergence.
+Side-effects are classified by tool name (`policy.yaml` `mcp.read_only_tools`);
+`initialize`, `tools/list`, and notifications are never side-effecting, so the
+handshake replays cleanly offline.
+
+Hermetic MCP demo (record an MCP-over-HTTP agent, then replay it from tape):
+
+    python -m recorder.record --demo --mcp
+    python -m recorder.replay --demo --mcp
+
+Replay shuts the MCP server down first: served 6/6 from tape, 2 side-effecting
+tools served but never executed (`live_executed: 0`), `divergences: 0`.
+
+stdio-transport MCP servers (subprocess JSON-RPC over stdin/stdout) are a
+documented follow-up: the JSON-RPC parsing in `mcp_proxy.py` is transport-neutral
+and reusable, but stdio needs a separate stream shim rather than the HTTP proxy.

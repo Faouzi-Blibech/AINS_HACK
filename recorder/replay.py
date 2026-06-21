@@ -29,7 +29,7 @@ def _run_agent(env_extra: dict, cmd: list[str]) -> None:
     time.sleep(0.6)
 
 
-def _demo() -> int:
+def _demo(mcp: bool = False) -> int:
     from recorder.mock_upstream import serve
     work = tempfile.mkdtemp(prefix="cassette-replay-")
     os.environ["CASSETTE_BLOB_DIR"] = os.path.join(work, "blobs")
@@ -37,10 +37,14 @@ def _demo() -> int:
     run_id = f"replay-demo-{int(time.time())}"
 
     server, base = serve(0)
-    demo_env = {"CASSETTE_TOOLS_URL": base,
-                "CASSETTE_LLM_URL": f"{base}/v1/chat/completions",
-                "GROQ_API_KEY": os.environ.get("GROQ_API_KEY", "demo-key")}
-    agent_cmd = [sys.executable, "agent/jira_triage_agent.py"]
+    if mcp:
+        demo_env = {"CASSETTE_MCP_URL": f"{base}/mcp"}
+        agent_cmd = [sys.executable, "agent/mcp_jira_agent.py"]
+    else:
+        demo_env = {"CASSETTE_TOOLS_URL": base,
+                    "CASSETTE_LLM_URL": f"{base}/v1/chat/completions",
+                    "GROQ_API_KEY": os.environ.get("GROQ_API_KEY", "demo-key")}
+        agent_cmd = [sys.executable, "agent/jira_triage_agent.py"]
 
     rec = Recorder(run_id, port=8899, store=store).start()
     try:
@@ -69,6 +73,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="recorder.replay")
     ap.add_argument("--demo", action="store_true",
                     help="record the Jira agent, then replay it from tape (hermetic)")
+    ap.add_argument("--mcp", action="store_true",
+                    help="with --demo: use the MCP-over-HTTP agent")
     ap.add_argument("--run-id")
     ap.add_argument("--tape", help="path to the recorded SQLite tape")
     ap.add_argument("--blob-dir", help="path to the recorded blob dir")
@@ -77,7 +83,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     if args.demo:
-        return _demo()
+        return _demo(mcp=args.mcp)
 
     if not (args.run_id and args.tape and args.blob_dir):
         ap.error("provide --run-id, --tape, and --blob-dir (or use --demo)")

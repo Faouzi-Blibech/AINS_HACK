@@ -5,6 +5,7 @@ import hashlib
 import json
 from urllib.parse import urlsplit
 
+from recorder import mcp_proxy
 from recorder.policy import Policy
 from trace_store.blob_store import store_blob
 
@@ -25,24 +26,43 @@ def request_identity(method: str, url: str, body: str, volatile: list[str]) -> s
     return f"{method.upper()} {path}\n{digest}"
 
 
+def compute_identity(method: str, url: str, body: str, policy: Policy) -> str:
+    """Transport router: MCP (JSON-RPC) requests get an id-independent identity,
+    everything else the HTTP method+path+body identity. Used by both the record
+    path (build_step) and the replay path (ReplayAddon) so they always agree."""
+    call = mcp_proxy.parse_request(body)
+    if call is not None:
+        return mcp_proxy.mcp_identity(call, policy.volatile_fields())
+    return request_identity(method, url, body, policy.volatile_fields())
+
+
 def build_step(*, step_id, prev_step_id, method, url, req_body, status_code,
                resp_body, latency_ms, ts_ms, policy: Policy) -> dict:
-    kind = policy.classify(method, url)
+    call = mcp_proxy.parse_request(req_body)
+    transport = "mcp" if call is not None else "http"
+    if transport == "mcp":
+        kind = "tool_call"
+        side_effecting = policy.is_side_effecting_mcp(call)
+        identity = mcp_proxy.mcp_identity(call, policy.volatile_fields())
+    else:
+        kind = policy.classify(method, url)
+        side_effecting = policy.is_side_effecting(method, url, kind)
+        identity = request_identity(method, url, req_body, policy.volatile_fields())
     req_blob = store_blob(policy.redact_body(req_body))
     resp_blob = store_blob(policy.redact_body(resp_body))
     step = {
         "step_id": step_id,
         "type": kind,
-        "transport": "http",
+        "transport": transport,
         "timestamp_ms": ts_ms,
         "latency_ms": latency_ms,
         "status": "ok" if status_code < 400 else "error",
-        "side_effecting": policy.is_side_effecting(method, url, kind),
+        "side_effecting": side_effecting,
         "confidence": None,
         "causal_parents": [prev_step_id] if prev_step_id else [],
     }
     step["status_code"] = status_code
-    step["request_identity"] = request_identity(method, url, req_body, policy.volatile_fields())
+    step["request_identity"] = identity
     if kind == "llm_call":
         step["prompt_blob"] = req_blob
         step["response_blob"] = resp_blob
@@ -61,7 +81,7 @@ def build_step(*, step_id, prev_step_id, method, url, req_body, status_code,
         except (ValueError, TypeError):
             pass
     else:
-        step["tool"] = policy.tool_name(url)
+        step["tool"] = (call.tool or call.method) if transport == "mcp" else policy.tool_name(url)
         step["args_blob"] = req_blob
         step["result_blob"] = resp_blob
     return step

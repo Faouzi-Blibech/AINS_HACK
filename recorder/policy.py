@@ -19,6 +19,7 @@ class Policy:
         self._read_only_paths = list(cfg.get("read_only_paths", []))
         self._redact = {f.lower() for f in cfg.get("redact_fields", [])}
         self._volatile = list(cfg.get("volatile_fields", []))
+        self._mcp_read_only_tools = set(cfg.get("mcp", {}).get("read_only_tools", []))
 
     def should_record(self, host: str) -> bool:
         return not self._record_hosts or host in self._record_hosts
@@ -35,6 +36,14 @@ class Policy:
         if any(urlsplit(url).path.endswith(p) for p in self._read_only_paths):
             return False
         return method.upper() not in self._read_only
+
+    def is_side_effecting_mcp(self, call) -> bool:
+        # Handshake / discovery messages (initialize, tools/list, notifications,
+        # ping) carry no tool and never cause a real-world effect. A tools/call
+        # is side-effecting unless its tool is on the read-only allowlist.
+        if call.tool is None:
+            return False
+        return call.tool not in self._mcp_read_only_tools
 
     def tool_name(self, url: str) -> str:
         return urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1]
