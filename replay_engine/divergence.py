@@ -126,6 +126,9 @@ class Divergence:
         if "_response_content" in edit:
             edit = dict(edit)
             edit["response_blob"] = store_blob(edit.pop("_response_content"))
+        if "_args_content" in edit:
+            edit = dict(edit)
+            edit["args_blob"] = store_blob(edit.pop("_args_content"))
 
         edited_step.update(edit)
         self.store.append_step(forked_id, edited_step)
