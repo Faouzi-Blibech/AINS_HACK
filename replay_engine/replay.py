@@ -201,6 +201,12 @@ class Replayer:
                     arguments = parsed
             except (OSError, json.JSONDecodeError):  # blob missing or not JSON
                 pass
+            except Exception as exc:  # unexpected error (network, codec, …) — log and continue
+                log.warning(
+                    "get_response_for_hash: unexpected error fetching blob %r: %s; "
+                    "falling back to synthesizer with empty args.",
+                    request_blob_ref, exc,
+                )
             return self._synthesize_response(tool="unknown_tool", arguments=arguments)
         step = queue.popleft()
         return self._build_response(step)
@@ -340,7 +346,14 @@ class Replayer:
         return json.loads(fetch_blob(blob_ref))
 
     def _build_response(self, step: dict[str, Any]) -> dict[str, Any]:
-        """Apply the safety invariant and return the response envelope."""
+        """Apply the safety invariant and return the response envelope.
+
+        Always returns a dict with ``payload`` as a dict (never a raw string
+        or None) so callers can safely do ``resp['payload'].get(...)`` without
+        a type check.  Error steps in ``faithful`` mode still carry the
+        recorded payload (coerced to dict if needed) and set
+        ``is_error_step=True``.
+        """
         # Core safety invariant:
         # If this step is side-effecting the real-world action is NEVER taken.
         # We do NOT increment side_effect_count because no side effect fires.
@@ -362,6 +375,26 @@ class Replayer:
                     "status_code": 200,
                     "payload": {},
                 }
+            # faithful mode: replay the error exactly, but guarantee payload is
+            # a dict so callers never receive a raw string from a recorded error
+            # body.  A non-dict payload (plain string, list, …) is wrapped.
+            raw_payload = self._resolve_payload(step)
+            payload: dict[str, Any] = (
+                raw_payload if isinstance(raw_payload, dict)
+                else {"_raw": raw_payload}
+            )
+            log.debug(
+                "replay: faithful error step %s status_code=%s",
+                step["step_id"], status_code,
+            )
+            return {
+                "step_id": step["step_id"],
+                "mocked_side_effect": mocked,
+                "synthesized": False,
+                "is_error_step": True,
+                "status_code": status_code,
+                "payload": payload,
+            }
 
         payload = self._resolve_payload(step)
         return {
