@@ -20,8 +20,6 @@ PyYAML               # recorder: policy.yaml parsing
 
 # --- Trace + blob store ---
 # SQLite ships with Python's stdlib (sqlite3). No extra dep for the prototype.
-# Supabase client for the failure-library store (Layer 2 persistence).
-supabase>=2.0,<3
 
 # --- Eval ---
 pytest
