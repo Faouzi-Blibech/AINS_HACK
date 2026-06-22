@@ -68,7 +68,7 @@ def build_trace() -> dict:
             {
                 "step_id": 1,
                 "type": "llm_call",
-                "model": "claude-opus-4-8",
+                "model": "llama-3.3-70b-versatile",
                 "prompt_blob": _blob(prompt),
                 "response_blob": _blob(response),
                 "timestamp_ms": 1750240000000,

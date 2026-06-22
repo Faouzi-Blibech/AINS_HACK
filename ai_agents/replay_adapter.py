@@ -2,19 +2,33 @@
 ReplayEngine protocol used by the blame graph.
 
 replay()              -- drives B's real sequential playback (baseline).
-replay_with_injection -- swap-ready; raises DivergenceNotReady until
-                         replay_engine.Divergence.fork is implemented.
+replay_with_injection -- forks at the injection step via Divergence.fork, then
+                         replays the forked run and returns a ReplayOutcome.
 """
 from __future__ import annotations
 
+import json
+
 from ai_agents.replay_interface import Injection, ReplayOutcome
 from replay_engine.replay import Replayer
-from replay_engine.divergence import Divergence
+from replay_engine.divergence import Divergence, DivergenceError
 from trace_store.store import TraceStore
+from trace_store.blob_store import store_blob
+
+
+def _json_safe(value) -> str:
+    """Return a JSON-parseable form of value (the replay engine json.loads every blob)."""
+    if not isinstance(value, str):
+        return json.dumps(value)
+    try:
+        json.loads(value)
+        return value
+    except json.JSONDecodeError:
+        return json.dumps(value)
 
 
 class DivergenceNotReady(NotImplementedError):
-    """Raised until replay_engine.Divergence.fork is implemented by the replay owner."""
+    """Raised when a fork cannot be created (kept for backward compatibility)."""
 
 
 class StoreReplayEngine:
@@ -25,10 +39,9 @@ class StoreReplayEngine:
     trace step statuses, not from Replayer.finish().status, which only reflects
     cursor completion.
 
-    replay_with_injection() is swap-ready: it calls Divergence.fork and will
-    return the forked run's outcome once fork is implemented. Until then it
-    raises DivergenceNotReady so callers can fall back to ScriptedReplay for
-    perturbation.
+    replay_with_injection() forks the run at injection.step_id via
+    Divergence.fork, replays the forked run, and returns the outcome with
+    replay_run_id set to the fork's run_id.
     """
 
     def __init__(self, store: TraceStore) -> None:
@@ -72,19 +85,36 @@ class StoreReplayEngine:
     def replay_with_injection(self, run_id: str, injection: Injection) -> ReplayOutcome:
         """Fork at injection.step_id with the edit applied; replay onward.
 
-        SWAP POINT: once Divergence.fork returns a real new run_id, replace the
-        body below with:
-            fork_run_id = Divergence().fork(run_id, injection.step_id, edit)
-            outcome = self.replay(fork_run_id)
-            outcome.replay_run_id = fork_run_id
-            return outcome
+        Translates the Injection into Divergence's edit dict, forks the run,
+        replays the fork, and returns the outcome with replay_run_id set.
+
+        Raises DivergenceNotReady (wrapping DivergenceError) when the fork
+        cannot be created (e.g. invalid step_id).
         """
-        edit = {injection.target: injection.value}
+        # Build the edit dict using Divergence's convenience keys. The replay
+        # engine json.loads every blob it serves, so the injected content must
+        # be valid JSON (a bare string like "high" is wrapped into "high").
+        target = injection.target
+        content = _json_safe(injection.value)
+
+        if target == "result":
+            edit: dict = {"_result_content": content}
+        elif target == "response":
+            edit = {"_response_content": content}
+        elif target == "args":
+            edit = {"args_blob": store_blob(content)}
+        elif target == "prompt":
+            edit = {"prompt_blob": store_blob(content)}
+        else:
+            edit = {target: injection.value}
+
         try:
-            Divergence().fork(run_id, injection.step_id, edit)
-        except NotImplementedError:
+            fork_run_id = Divergence(self._store).fork(run_id, injection.step_id, edit)
+        except DivergenceError as exc:
             raise DivergenceNotReady(
-                "Divergence.fork is not yet implemented by the replay owner; "
-                "injection-path replay is not available. "
-                "Use ScriptedReplay for perturbation until fork is ready."
-            ) from None
+                f"Divergence.fork could not create a fork: {exc}"
+            ) from exc
+
+        outcome = self.replay(fork_run_id)
+        outcome.replay_run_id = fork_run_id
+        return outcome

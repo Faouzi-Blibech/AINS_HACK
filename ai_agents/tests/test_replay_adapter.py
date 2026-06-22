@@ -119,28 +119,44 @@ class TestSideEffectInvariant:
 
 
 # ---------------------------------------------------------------------------
-# Test 3: replay_with_injection raises DivergenceNotReady
+# Test 3: replay_with_injection uses real Divergence.fork
 # ---------------------------------------------------------------------------
 
 class TestInjectionPath:
 
-    def test_raises_divergence_not_ready(self, engine, trace):
-        from ai_agents.replay_adapter import DivergenceNotReady
+    def test_returns_replay_outcome(self, engine, trace):
+        """replay_with_injection returns a ReplayOutcome (not an exception)."""
+        from ai_agents.replay_interface import ReplayOutcome
 
         injection = Injection(step_id=2, target="result", value='{"priority": "high"}')
-        with pytest.raises(DivergenceNotReady):
-            engine.replay_with_injection(trace["run_id"], injection)
+        outcome = engine.replay_with_injection(trace["run_id"], injection)
+        assert isinstance(outcome, ReplayOutcome)
+
+    def test_side_effect_count_is_zero(self, engine, trace):
+        """The forked replay must keep side_effect_count == 0."""
+        injection = Injection(step_id=2, target="result", value='{"priority": "high"}')
+        outcome = engine.replay_with_injection(trace["run_id"], injection)
+        assert outcome.side_effect_count == 0
+
+    def test_replay_run_id_is_set(self, engine, trace):
+        """replay_run_id must be set to the forked run id (not None)."""
+        injection = Injection(step_id=2, target="result", value='{"priority": "high"}')
+        outcome = engine.replay_with_injection(trace["run_id"], injection)
+        assert outcome.replay_run_id is not None
+        assert outcome.replay_run_id != trace["run_id"]
 
     def test_divergence_not_ready_is_not_implemented_error(self, engine, trace):
+        """DivergenceNotReady must remain a subclass of NotImplementedError for backward compat."""
         from ai_agents.replay_adapter import DivergenceNotReady
 
         assert issubclass(DivergenceNotReady, NotImplementedError)
 
-    def test_divergence_not_ready_message_is_helpful(self, engine, trace):
+    def test_invalid_step_id_raises_divergence_not_ready(self, engine, trace):
+        """An injection targeting a non-existent step_id raises DivergenceNotReady."""
         from ai_agents.replay_adapter import DivergenceNotReady
 
-        injection = Injection(step_id=2, target="result", value='{"priority": "high"}')
-        with pytest.raises(DivergenceNotReady, match="fork"):
+        injection = Injection(step_id=999, target="result", value="x")
+        with pytest.raises(DivergenceNotReady):
             engine.replay_with_injection(trace["run_id"], injection)
 
 

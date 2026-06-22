@@ -186,7 +186,7 @@
         {
           "step_id": 1,
           "type": "llm_call",
-          "model": "claude-opus-4-8",
+          "model": "llama-3.3-70b-versatile",
           "prompt_blob": "sha256:a3f9c2...",
           "response_blob": "sha256:b7d1e4...",
           "timestamp_ms": 1718483200000,

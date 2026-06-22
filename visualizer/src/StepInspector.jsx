@@ -7,51 +7,6 @@
 //   blame         -- BlameGraphResponse (from /blame)
 //   resolvedStep  -- ResolvedStepDetail from getStep() (optional; when provided, use its inlined content)
 
-function ConfidenceGauge({ value, color }) {
-  const pct = Math.round((value ?? 0) * 100);
-  const circumference = 2 * Math.PI * 34;
-  const dash = `${(pct / 100) * circumference} ${circumference}`;
-  return (
-    <div style={{ position: "relative", flex: "none" }}>
-      <svg width="84" height="84" viewBox="0 0 84 84" style={{ transform: "rotate(-90deg)" }}>
-        <circle cx="42" cy="42" r="34" fill="none" stroke="var(--bg3)" strokeWidth="9" />
-        <circle
-          cx="42"
-          cy="42"
-          r="34"
-          fill="none"
-          stroke={color}
-          strokeWidth="9"
-          strokeLinecap="round"
-          strokeDasharray={dash}
-        />
-      </svg>
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <span style={{ font: "700 19px var(--mono)", color, lineHeight: 1 }}>{pct}%</span>
-        <span
-          style={{
-            font: "600 7.5px var(--mono)",
-            letterSpacing: ".1em",
-            color: "var(--fg2)",
-            marginTop: 1,
-          }}
-        >
-          CONF
-        </span>
-      </div>
-    </div>
-  );
-}
-
 function ContentBlock({ label, value }) {
   if (value === null || value === undefined) {
     return (
@@ -144,9 +99,34 @@ export default function StepInspector({ trace, stepId, blame, resolvedStep, memo
 
   const isLlm = step.type === "llm_call";
   const isTool = step.type === "tool_call";
-  const confidence = step.confidence;
-  const needsReview = confidence != null && confidence < 0.7;
-  const confColor = needsReview ? "var(--warn)" : confidence != null ? "var(--pass)" : "var(--fg2)";
+  const confidence = step.confidence ?? null;
+  // needsReview: true when null or < 0.7
+  const needsReview = confidence === null || confidence < 0.7;
+  // confText: numeric percentage or "n/a"
+  const confText = confidence !== null ? `${Math.round(confidence * 100)}%` : "n/a";
+  // bar color: pass >= 0.7, warn 0.5..0.7, fail < 0.5, none if null
+  const confBarColor =
+    confidence === null
+      ? "var(--warn)"
+      : confidence >= 0.7
+      ? "var(--pass)"
+      : confidence >= 0.5
+      ? "var(--warn)"
+      : "var(--fail)";
+  const confColor =
+    confidence === null
+      ? "var(--warn)"
+      : confidence >= 0.7
+      ? "var(--pass)"
+      : confidence >= 0.5
+      ? "var(--warn)"
+      : "var(--fail)";
+  const confBarWidth = confidence !== null ? `${Math.round(confidence * 100)}%` : "0%";
+  // striped warn fill when needsReview (warn or null)
+  const confBarBg =
+    needsReview && confidence !== null && confidence >= 0.5
+      ? `repeating-linear-gradient(45deg,var(--warn) 0px,var(--warn) 4px,var(--warn-dim) 4px,var(--warn-dim) 8px)`
+      : confBarColor;
 
   // Content from resolvedStep (API) if available, else null
   const prompt = resolvedStep?.prompt ?? null;
@@ -285,92 +265,117 @@ export default function StepInspector({ trace, stepId, blame, resolvedStep, memo
           gap: 18,
         }}
       >
-        {/* Confidence gauge + meta */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 18,
-            background: "var(--bg2)",
-            border: "1px solid var(--bd)",
-            borderRadius: 14,
-            padding: 16,
-          }}
-        >
-          {confidence != null ? (
-            <ConfidenceGauge value={confidence} color={confColor} />
-          ) : (
-            <div
+        {/* Confidence block -- design lines 316-331 */}
+        <div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: 7,
+            }}
+          >
+            <span
               style={{
-                width: 84,
-                height: 84,
-                borderRadius: "50%",
-                background: "var(--bg3)",
-                border: "1px solid var(--bd2)",
-                display: "grid",
-                placeItems: "center",
-                flex: "none",
+                font: "600 9.5px var(--mono)",
+                letterSpacing: ".1em",
+                color: "var(--fg2)",
               }}
             >
-              <span style={{ font: "600 8px var(--mono)", color: "var(--fg2)", letterSpacing: ".06em" }}>N/A</span>
-            </div>
-          )}
-
-          <div style={{ flex: 1, minWidth: 0 }}>
-            {needsReview && (
+              CONFIDENCE
+            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {needsReview && (
+                <span
+                  style={{
+                    font: "600 9px var(--mono)",
+                    color: "var(--warn)",
+                    background: "var(--warn-dim)",
+                    border: "1px solid var(--warn)",
+                    borderRadius: 5,
+                    padding: "1px 6px",
+                  }}
+                >
+                  NEEDS REVIEW
+                </span>
+              )}
               <span
                 style={{
-                  font: "600 9px var(--mono)",
-                  color: "var(--warn)",
-                  background: "var(--warn-dim)",
-                  border: "1px solid var(--warn)",
-                  borderRadius: 6,
-                  padding: "2px 7px",
-                  display: "inline-block",
-                  marginBottom: 9,
-                  letterSpacing: ".04em",
+                  font: "600 13px var(--mono)",
+                  color: confColor,
                 }}
               >
-                NEEDS REVIEW
+                {confText}
               </span>
-            )}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              <div>
-                <div style={{ font: "600 8px var(--mono)", letterSpacing: ".08em", color: "var(--fg2)" }}>TYPE</div>
-                <div style={{ font: "550 12px var(--mono)", color: "var(--fg0)", marginTop: 2 }}>{step.type}</div>
-              </div>
-              <div>
-                <div style={{ font: "600 8px var(--mono)", letterSpacing: ".08em", color: "var(--fg2)" }}>STATUS</div>
-                <div
-                  style={{
-                    font: "550 12px var(--mono)",
-                    color: step.status === "error" ? "var(--fail)" : step.status === "ok" ? "var(--pass)" : "var(--fg0)",
-                    marginTop: 2,
-                  }}
-                >
-                  {step.status ?? "unknown"}
-                </div>
-              </div>
-              <div>
-                <div style={{ font: "600 8px var(--mono)", letterSpacing: ".08em", color: "var(--fg2)" }}>SIDE EFFECT</div>
-                <div
-                  style={{
-                    font: "550 12px var(--mono)",
-                    color: step.side_effecting ? "var(--warn)" : "var(--pass)",
-                    marginTop: 2,
-                  }}
-                >
-                  {step.side_effecting ? "YES" : "NO"}
-                </div>
-              </div>
-              {step.latency_ms != null && (
-                <div>
-                  <div style={{ font: "600 8px var(--mono)", letterSpacing: ".08em", color: "var(--fg2)" }}>LATENCY</div>
-                  <div style={{ font: "550 12px var(--mono)", color: "var(--fg0)", marginTop: 2 }}>{step.latency_ms}ms</div>
-                </div>
-              )}
             </div>
           </div>
+          <div
+            style={{
+              height: 8,
+              borderRadius: 6,
+              background: "var(--bg3)",
+              overflow: "hidden",
+              border: "1px solid var(--bd)",
+            }}
+          >
+            <div
+              style={{
+                width: confBarWidth,
+                height: "100%",
+                borderRadius: 6,
+                background: confBarBg,
+                transition: "width 0.4s ease",
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Step meta grid */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 8,
+            background: "var(--bg2)",
+            border: "1px solid var(--bd)",
+            borderRadius: 12,
+            padding: "12px 14px",
+          }}
+        >
+          <div>
+            <div style={{ font: "600 8px var(--mono)", letterSpacing: ".08em", color: "var(--fg2)" }}>TYPE</div>
+            <div style={{ font: "550 12px var(--mono)", color: "var(--fg0)", marginTop: 2 }}>{step.type}</div>
+          </div>
+          <div>
+            <div style={{ font: "600 8px var(--mono)", letterSpacing: ".08em", color: "var(--fg2)" }}>STATUS</div>
+            <div
+              style={{
+                font: "550 12px var(--mono)",
+                color: step.status === "error" ? "var(--fail)" : step.status === "ok" ? "var(--pass)" : "var(--fg0)",
+                marginTop: 2,
+              }}
+            >
+              {step.status ?? "unknown"}
+            </div>
+          </div>
+          <div>
+            <div style={{ font: "600 8px var(--mono)", letterSpacing: ".08em", color: "var(--fg2)" }}>SIDE EFFECT</div>
+            <div
+              style={{
+                font: "550 12px var(--mono)",
+                color: step.side_effecting ? "var(--warn)" : "var(--pass)",
+                marginTop: 2,
+              }}
+            >
+              {step.side_effecting ? "YES" : "NO"}
+            </div>
+          </div>
+          {step.latency_ms != null && (
+            <div>
+              <div style={{ font: "600 8px var(--mono)", letterSpacing: ".08em", color: "var(--fg2)" }}>LATENCY</div>
+              <div style={{ font: "550 12px var(--mono)", color: "var(--fg0)", marginTop: 2 }}>{step.latency_ms}ms</div>
+            </div>
+          )}
         </div>
 
         {/* LLM call: prompt + response */}
