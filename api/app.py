@@ -54,6 +54,29 @@ _DEFAULT_BLOB_DIR = str(_REPO_ROOT / "docs" / "fixtures" / "blobs")
 if "CASSETTE_BLOB_DIR" not in os.environ:
     os.environ["CASSETTE_BLOB_DIR"] = _DEFAULT_BLOB_DIR
 
+
+def _sync_fixture_blobs() -> None:
+    """Copy the bundled fixture blobs into the active blob dir.
+
+    Lets the seeded demo run resolve even when CASSETTE_BLOB_DIR points at a
+    user store (e.g. ~/.cassette/blobs) that holds recorded runs. Blobs are
+    content-addressed, so this is an idempotent copy that never overwrites.
+    """
+    import shutil
+
+    active = Path(os.environ["CASSETTE_BLOB_DIR"])
+    src = Path(_DEFAULT_BLOB_DIR)
+    if not src.is_dir() or active.resolve() == src.resolve():
+        return
+    active.mkdir(parents=True, exist_ok=True)
+    for blob in src.iterdir():
+        dest = active / blob.name
+        if blob.is_file() and not dest.exists():
+            shutil.copyfile(blob, dest)
+
+
+_sync_fixture_blobs()
+
 # Path to the eval harness results file (written by eval/harness.py).
 EVAL_RESULTS_PATH = os.environ.get(
     "CASSETTE_EVAL_RESULTS",
@@ -111,12 +134,33 @@ def _try_parse_json(text: Optional[str]) -> Any:
 # Blame graph oracle seam
 # ---------------------------------------------------------------------------
 
-# Maps run_id -> set of step_ids whose correction resolves the failure.
-# This is the seam for the real divergence engine: once available, replace
-# ScriptedReplay with replay_engine.Replayer and remove the entries below.
-RESOLVES_AT: dict[str, set[int]] = {
-    "run-fixture-001": {2},
-}
+def _load_resolves_file(path) -> dict:
+    try:
+        import json as _json
+        with open(path, encoding="utf-8") as fh:
+            return _json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def resolves_at_for(run_id: str, doc: dict) -> set[int]:
+    """Which step-ids, when corrected, resolve the failure (blame-graph oracle).
+
+    Sourced from data, not hardcoded: the local store's resolves.json, then the
+    bundled fixture's resolves.json, then a per-step `expected_root_cause` marker.
+    """
+    from cassette import paths as _paths
+
+    candidates = [
+        _paths.resolves_path(),
+        Path(__file__).resolve().parent.parent / "docs" / "fixtures" / "resolves.json",
+    ]
+    for candidate in candidates:
+        data = _load_resolves_file(candidate)
+        if run_id in data:
+            return set(data[run_id])
+
+    return {s["step_id"] for s in doc.get("steps", []) if s.get("expected_root_cause")}
 
 
 # ---------------------------------------------------------------------------
@@ -311,16 +355,16 @@ def get_step(run_id: str, step_id: int) -> ResolvedStepDetail:
 def get_blame_graph(run_id: str) -> BlameGraphResponse:
     """Return the Temporal Blame Graph for a run.
 
-    Uses ScriptedReplay as the perturbation oracle. RESOLVES_AT is the seam
+    Uses ScriptedReplay as the perturbation oracle. resolves_at_for is the seam
     for the real divergence engine: once available, replace ScriptedReplay
-    with replay_engine.Replayer and populate RESOLVES_AT from it.
+    with replay_engine.Replayer and source resolves_at_for from it.
     """
     try:
         doc = store.get_run(run_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="run not found")
 
-    resolves_at = RESOLVES_AT.get(run_id, set())
+    resolves_at = resolves_at_for(run_id, doc)
     blob_dir = os.environ["CASSETTE_BLOB_DIR"]
     resolver = make_resolver(blob_dir)
 
@@ -513,15 +557,15 @@ def counterfactual(run_id: str, body: CounterfactualRequest) -> CounterfactualRe
     except KeyError:
         raise HTTPException(status_code=404, detail="run not found")
 
-    # Resolve step_id: use body value, or fall back to RESOLVES_AT seam, or step 1
+    # Resolve step_id: use body value, or fall back to the resolves_at_for seam, or step 1
     step_id = body.step_id
     if step_id is None:
-        resolves_set = RESOLVES_AT.get(run_id, set())
+        resolves_set = resolves_at_for(run_id, doc)
         step_id = min(resolves_set) if resolves_set else 1
 
     n = body.n if body.n is not None else 4
 
-    resolves_at = RESOLVES_AT.get(run_id, set())
+    resolves_at = resolves_at_for(run_id, doc)
     engine = ScriptedReplay(doc, resolves_at)
 
     # Attempt to resolve the original prompt/result text for the target step

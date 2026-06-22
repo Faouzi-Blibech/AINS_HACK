@@ -1,0 +1,4 @@
+Triage Jira ticket OPS-4521.
+Summary: Checkout API returning 500s for all EU customers.
+Priority field (raw): P2 / medium?
+Return JSON: intent, email_subject, email_body.
