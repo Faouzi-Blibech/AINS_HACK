@@ -12,7 +12,7 @@
     {
       "step_id": 1,
       "type": "llm_call",
-      "model": "claude-opus-4-8",
+      "model": "llama-3.3-70b-versatile",
       "prompt_blob": "sha256:9ba79d451fa42c006dfeb1701a541a980102beb578cea5a342e094feefc6d9af",
       "response_blob": "sha256:6989e5ad668feaae451d0f94ee29278ff39a47a12768b74999289c029a6db9d5",
       "timestamp_ms": 1750240000000,

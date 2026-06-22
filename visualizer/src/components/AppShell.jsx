@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import MetricBar from "./MetricBar.jsx";
+import { listRuns } from "../api/client.js";
 
 // Nav icon paths (20x20 viewBox)
 const ICONS = {
@@ -19,31 +20,19 @@ const NAV_ITEMS = [
 
 function CassetteLogoMark() {
   return (
-    <div
-      style={{
-        width: 38,
-        height: 38,
-        borderRadius: 11,
-        background: "var(--brand)",
-        display: "grid",
-        placeItems: "center",
-        flex: "none",
-        boxShadow: "var(--glow)",
-      }}
-    >
-      <svg width="24" height="24" viewBox="0 0 30 30">
-        {/* Left reel */}
-        <g>
-          <circle cx="10" cy="15" r="4.6" fill="none" stroke="#0b0e18" strokeWidth="2" />
-          <circle cx="10" cy="15" r="1.2" fill="#0b0e18" />
-        </g>
-        {/* Right reel */}
-        <g>
-          <circle cx="20" cy="15" r="4.6" fill="none" stroke="#0b0e18" strokeWidth="2" />
-          <circle cx="20" cy="15" r="1.2" fill="#0b0e18" />
-        </g>
-      </svg>
-    </div>
+    <svg width="32" height="32" viewBox="0 0 30 30" style={{ flex: "none" }}>
+      <rect x="1" y="1" width="28" height="28" rx="7" fill="var(--bg3)" stroke="var(--bd2)" />
+      {/* Left reel */}
+      <g>
+        <circle cx="10" cy="15" r="4.4" fill="none" stroke="var(--accent)" strokeWidth="1.6" />
+        <circle cx="10" cy="15" r="1.1" fill="var(--accent)" />
+      </g>
+      {/* Right reel */}
+      <g>
+        <circle cx="20" cy="15" r="4.4" fill="none" stroke="var(--accent)" strokeWidth="1.6" />
+        <circle cx="20" cy="15" r="1.1" fill="var(--accent)" />
+      </g>
+    </svg>
   );
 }
 
@@ -118,16 +107,269 @@ function SidebarNavItem({ label, to, end, icon, count, matchPrefix }) {
   );
 }
 
+// Jump palette modal
+function JumpPalette({ onClose }) {
+  const navigate = useNavigate();
+  const [query, setQuery] = useState("");
+  const [runs, setRuns] = useState([]);
+  const [fetchError, setFetchError] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [highlightIndex, setHighlightIndex] = useState(0);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    listRuns()
+      .then((data) => {
+        setRuns(data.runs ?? []);
+        setLoading(false);
+      })
+      .catch(() => {
+        setFetchError(true);
+        setLoading(false);
+      });
+  }, []);
+
+  useEffect(() => {
+    if (inputRef.current) inputRef.current.focus();
+  }, []);
+
+  const filteredRuns = runs.filter((r) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      (r.run_id ?? "").toLowerCase().includes(q) ||
+      (r.agent ?? "").toLowerCase().includes(q)
+    );
+  });
+
+  // Reset highlight when query changes
+  useEffect(() => {
+    setHighlightIndex(0);
+  }, [query]);
+
+  function goToRun(runId) {
+    navigate(`/runs/${runId}`);
+    onClose();
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === "Escape") {
+      onClose();
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightIndex((i) => Math.min(i + 1, filteredRuns.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightIndex((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter") {
+      const run = filteredRuns[highlightIndex];
+      if (run) goToRun(run.run_id);
+    }
+  }
+
+  return (
+    // Backdrop
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1000,
+        background: "rgba(0,0,0,0.48)",
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "center",
+        paddingTop: "15vh",
+      }}
+    >
+      {/* Panel */}
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: 520,
+          maxWidth: "90vw",
+          background: "var(--bg1)",
+          border: "1px solid var(--bd2)",
+          borderRadius: 16,
+          boxShadow: "0 24px 64px rgba(0,0,0,0.48)",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        {/* Input row */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "14px 16px",
+            borderBottom: "1px solid var(--bd)",
+          }}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            style={{ flex: "none", color: "var(--fg2)" }}
+          >
+            <circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M11 11l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Jump to a run..."
+            style={{
+              flex: 1,
+              border: "none",
+              outline: "none",
+              background: "transparent",
+              font: "450 14px var(--ui)",
+              color: "var(--fg0)",
+            }}
+          />
+          <kbd
+            style={{
+              font: "600 10px var(--mono)",
+              background: "var(--bg3)",
+              border: "1px solid var(--bd2)",
+              borderRadius: 5,
+              padding: "2px 6px",
+              color: "var(--fg2)",
+            }}
+          >
+            ESC
+          </kbd>
+        </div>
+
+        {/* Results list */}
+        <div style={{ maxHeight: 360, overflowY: "auto" }}>
+          {loading && (
+            <div
+              style={{
+                padding: "24px 16px",
+                font: "450 12.5px var(--ui)",
+                color: "var(--fg2)",
+                textAlign: "center",
+              }}
+            >
+              Loading runs...
+            </div>
+          )}
+          {!loading && fetchError && (
+            <div
+              style={{
+                padding: "24px 16px",
+                font: "450 12.5px var(--ui)",
+                color: "var(--fail)",
+                textAlign: "center",
+              }}
+            >
+              Could not load runs.
+            </div>
+          )}
+          {!loading && !fetchError && filteredRuns.length === 0 && (
+            <div
+              style={{
+                padding: "24px 16px",
+                font: "450 12.5px var(--ui)",
+                color: "var(--fg2)",
+                textAlign: "center",
+              }}
+            >
+              No runs match.
+            </div>
+          )}
+          {!loading &&
+            !fetchError &&
+            filteredRuns.map((run, idx) => {
+              const highlighted = idx === highlightIndex;
+              const fail = run.status === "error";
+              return (
+                <div
+                  key={run.run_id}
+                  onClick={() => goToRun(run.run_id)}
+                  onMouseEnter={() => setHighlightIndex(idx)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "10px 16px",
+                    cursor: "pointer",
+                    background: highlighted ? "var(--accent-dim)" : "transparent",
+                    borderLeft: highlighted ? "2px solid var(--accent)" : "2px solid transparent",
+                    transition: "background 0.08s",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 7,
+                      height: 7,
+                      borderRadius: "50%",
+                      flex: "none",
+                      background: fail ? "var(--fail)" : "var(--pass)",
+                      boxShadow: `0 0 0 3px ${fail ? "var(--fail-dim)" : "var(--pass-dim)"}`,
+                    }}
+                  />
+                  <span
+                    style={{
+                      font: "500 12px var(--mono)",
+                      color: highlighted ? "var(--accent)" : "var(--fg1)",
+                      flex: "none",
+                    }}
+                  >
+                    {run.run_id}
+                  </span>
+                  <span
+                    style={{
+                      font: "450 12px var(--ui)",
+                      color: "var(--fg2)",
+                      minWidth: 0,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {run.agent}
+                  </span>
+                </div>
+              );
+            })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AppShell() {
   const [theme, setTheme] = useState(() => {
     return localStorage.getItem("cassette-theme") || "dark";
   });
   const location = useLocation();
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("cassette-theme", theme);
   }, [theme]);
+
+  // Ctrl/Cmd+K shortcut
+  const handleGlobalKeyDown = useCallback((e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+      e.preventDefault();
+      setPaletteOpen(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, [handleGlobalKeyDown]);
 
   function toggleTheme() {
     setTheme((t) => (t === "dark" ? "light" : "dark"));
@@ -160,6 +402,9 @@ export default function AppShell() {
         fontFamily: "var(--ui)",
       }}
     >
+      {/* Jump palette */}
+      {paletteOpen && <JumpPalette onClose={() => setPaletteOpen(false)} />}
+
       {/* Left sidebar */}
       <aside
         style={{
@@ -191,20 +436,10 @@ export default function AppShell() {
             >
               CASSETTE
             </div>
-            <div
-              style={{
-                font: "450 9px var(--mono)",
-                letterSpacing: ".1em",
-                color: "var(--fg2)",
-                marginTop: 2,
-              }}
-            >
-              FLIGHT&nbsp;RECORDER
-            </div>
           </div>
         </div>
 
-        {/* Search field */}
+        {/* Search / jump button */}
         <button
           style={{
             margin: "4px 16px 8px",
@@ -219,7 +454,7 @@ export default function AppShell() {
             color: "var(--fg2)",
             font: "450 12.5px var(--ui)",
           }}
-          onClick={() => {}}
+          onClick={() => setPaletteOpen(true)}
         >
           <svg
             width="14"

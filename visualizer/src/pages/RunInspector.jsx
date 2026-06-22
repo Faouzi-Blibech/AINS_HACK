@@ -9,7 +9,9 @@ import TapeStrip from "../components/TapeStrip.jsx";
 import MemoryBanner from "../components/MemoryBanner.jsx";
 import RootCausePanel from "../components/RootCausePanel.jsx";
 import SideEffectsBanner from "../components/SideEffectsBanner.jsx";
+import Trajectory from "../components/Trajectory.jsx";
 import StepInspector from "../StepInspector.jsx";
+import Dock from "../components/Dock.jsx";
 
 // Transport controls: REC / PLAY / OVER (visual only)
 function TransportControls({ isPlaying, onPlay }) {
@@ -479,224 +481,13 @@ export default function RunInspector() {
           borderTop: "1px solid var(--bd)",
         }}
       >
-        {/* Left: trace info / step list (replaces React Flow DAG) */}
-        <div
-          style={{
-            flex: 1,
-            minWidth: 0,
-            display: "flex",
-            flexDirection: "column",
-            background: "var(--bg0)",
-            backgroundImage: "radial-gradient(var(--bd) .9px, transparent .9px)",
-            backgroundSize: "24px 24px",
-            overflow: "auto",
-            padding: "24px 28px",
-          }}
-        >
-          {/* Section label */}
-          <div
-            style={{
-              font: "600 9.5px var(--mono)",
-              letterSpacing: ".14em",
-              color: "var(--fg2)",
-              marginBottom: 16,
-            }}
-          >
-            EXECUTION STEPS
-          </div>
-
-          {/* Step cards */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {trace.steps.map((step) => {
-              const isSelected = step.step_id === selectedStepId;
-              const isError = step.status === "error";
-              const isSideEffect = step.side_effecting;
-              const blameEntry = blame?.steps?.find((b) => b.step_id === step.step_id);
-              const isRootCause = blame?.root_cause_step_id === step.step_id;
-              const blameScore = blameEntry?.blame_score ?? 0;
-
-              return (
-                <div
-                  key={step.step_id}
-                  onClick={() => setSelectedStepId(step.step_id)}
-                  style={{
-                    position: "relative",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                    padding: "12px 14px",
-                    borderRadius: 13,
-                    background: isSelected ? "var(--bg2)" : "var(--bg1)",
-                    border: isSelected
-                      ? "1.5px solid var(--accent-bd)"
-                      : isRootCause
-                      ? "1px solid var(--root)"
-                      : "1px solid var(--bd)",
-                    cursor: "pointer",
-                    boxShadow: isSelected ? "var(--shadow-sm)" : "none",
-                    transition: "background 0.12s, border-color 0.12s",
-                    animation: "fadeup .25s ease",
-                  }}
-                >
-                  {/* Left color rail */}
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: 0,
-                      top: "15%",
-                      bottom: "15%",
-                      width: 3,
-                      borderRadius: "0 3px 3px 0",
-                      background: isRootCause
-                        ? "var(--root)"
-                        : isError
-                        ? "var(--fail)"
-                        : isSideEffect
-                        ? "var(--warn)"
-                        : isSelected
-                        ? "var(--accent)"
-                        : "transparent",
-                    }}
-                  />
-
-                  {/* Icon tile */}
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      borderRadius: 9,
-                      background:
-                        step.type === "llm_call" ? "var(--accent-dim)" : "var(--bg3)",
-                      border: "1px solid var(--bd2)",
-                      display: "grid",
-                      placeItems: "center",
-                      flex: "none",
-                    }}
-                  >
-                    {step.type === "llm_call" ? (
-                      <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="var(--accent)" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M4 6h12M4 10h8M4 14h10" />
-                      </svg>
-                    ) : (
-                      <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke={isSideEffect ? "var(--warn)" : "var(--fg1)"} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M5 3v6a3 3 0 003 3h3M11 9l3 3-3 3" />
-                      </svg>
-                    )}
-                  </div>
-
-                  {/* Info */}
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                      <span style={{ font: "600 9.5px var(--mono)", color: isSelected ? "var(--accent)" : "var(--fg2)" }}>
-                        {step.step_id.toString().padStart(2, "0")}
-                      </span>
-                      <span
-                        style={{
-                          font: "600 13px var(--ui)",
-                          color: "var(--fg0)",
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                      >
-                        {step.type === "llm_call"
-                          ? step.model ?? "LLM call"
-                          : step.tool ?? "tool call"}
-                      </span>
-                    </div>
-                    <div
-                      style={{
-                        font: "450 10px var(--mono)",
-                        color: "var(--fg2)",
-                        marginTop: 2,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {step.type}
-                      {step.latency_ms != null ? ` · ${step.latency_ms}ms` : ""}
-                      {step.confidence != null
-                        ? ` · conf ${Math.round(step.confidence * 100)}%`
-                        : ""}
-                    </div>
-                    {/* Blame bar */}
-                    {blameScore > 0 && (
-                      <div style={{ height: 3, borderRadius: 3, background: "var(--bg3)", marginTop: 7, overflow: "hidden" }}>
-                        <div
-                          style={{
-                            width: `${Math.round(blameScore * 100)}%`,
-                            height: "100%",
-                            borderRadius: 3,
-                            background: isRootCause ? "var(--root)" : "var(--warn)",
-                          }}
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Right badges */}
-                  <div style={{ flex: "none", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>
-                    {isError && (
-                      <span
-                        style={{
-                          font: "700 8px var(--mono)",
-                          color: "#fff",
-                          background: "var(--fail)",
-                          borderRadius: 5,
-                          padding: "2px 5px",
-                          letterSpacing: ".04em",
-                        }}
-                      >
-                        FAIL
-                      </span>
-                    )}
-                    {isRootCause && (
-                      <span
-                        style={{
-                          font: "700 8px var(--mono)",
-                          color: "#fff",
-                          background: "var(--root)",
-                          borderRadius: 5,
-                          padding: "2px 5px",
-                          letterSpacing: ".04em",
-                        }}
-                      >
-                        ROOT
-                      </span>
-                    )}
-                    <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
-                      {isSideEffect && (
-                        <span
-                          title="side-effecting"
-                          style={{
-                            width: 9,
-                            height: 9,
-                            borderRadius: 3,
-                            background: "var(--warn)",
-                            boxShadow: "0 0 0 3px var(--warn-dim)",
-                          }}
-                        />
-                      )}
-                      {step.confidence != null && step.confidence < 0.7 && (
-                        <span
-                          title="low confidence"
-                          style={{
-                            width: 9,
-                            height: 9,
-                            borderRadius: "50%",
-                            border: "1px solid var(--warn)",
-                            background: "repeating-linear-gradient(45deg, var(--warn), var(--warn) 2px, transparent 2px, transparent 4px)",
-                          }}
-                        />
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        {/* Left: execution trajectory graph */}
+        <Trajectory
+          trace={trace}
+          blame={blame}
+          selectedStepId={selectedStepId}
+          onSelectStep={setSelectedStepId}
+        />
 
         {/* Right: Step inspector */}
         <StepInspector
@@ -707,6 +498,9 @@ export default function RunInspector() {
           memoryMatch={memoryEntry ? { label: memoryLabel, blameStep: memoryEntry.entry.blame_step } : null}
         />
       </div>
+
+      {/* ===== ANALYSIS DOCK ===== */}
+      <Dock trace={trace} blame={blame} selectedStepId={selectedStepId} />
     </div>
   );
 }

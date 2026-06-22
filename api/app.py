@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, List, Optional, Union
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,6 +32,11 @@ from trace_store.store import TraceStore
 from trace_store.blob_store import fetch_blob
 from ai_agents.root_cause import analyze, ScriptedReplay
 from ai_agents.trace_content import make_resolver
+import ai_agents.debug_agent as _debug_agent
+import ai_agents.counterfactual as _counterfactual
+import ai_agents.llm as _llm
+from ai_agents.replay_adapter import StoreReplayEngine
+from replay_engine.divergence import Divergence, DivergenceError
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -73,7 +78,7 @@ app.add_middleware(
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     # Accept any localhost dev port (Vite may fall back to 5174+ when 5173 is busy).
     allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -140,6 +145,75 @@ class EvalReport(BaseModel):
     generated_at: Optional[str] = None
     metrics: list[EvalMetric] = []
     caveats: list[str] = []
+
+
+# ---------------------------------------------------------------------------
+# Dock request / response models
+# ---------------------------------------------------------------------------
+
+
+class InjectRequest(BaseModel):
+    instruction: str
+
+
+class InjectionDetail(BaseModel):
+    step_id: int
+    target: str
+    value: str
+
+
+class InjectAvailableResponse(BaseModel):
+    available: bool
+    injection: Optional[InjectionDetail] = None
+    confidence: Optional[float] = None
+    rationale: Optional[str] = None
+
+
+class InjectUnavailableResponse(BaseModel):
+    available: bool
+    detail: str
+
+
+class DivergeRequest(BaseModel):
+    step_id: int
+    target: str
+    value: str
+
+
+class DivergeDiff(BaseModel):
+    fork_step_id: Optional[int] = None
+    original_steps: int
+    forked_steps: int
+    edited_fields: List[str]
+
+
+class DivergeResponse(BaseModel):
+    fork_run_id: str
+    diff: DivergeDiff
+    final_status: str
+    side_effect_count: int
+
+
+class CounterfactualRequest(BaseModel):
+    step_id: Optional[int] = None
+    n: Optional[int] = None
+
+
+class VariantItem(BaseModel):
+    variant_id: str
+    prompt: str
+    resolved: bool
+    score: float
+    steps_changed: int
+    side_effect_count: int
+
+
+class CounterfactualResponse(BaseModel):
+    available: bool
+    variants: List[VariantItem]
+    winner: Optional[str] = None
+    confidence: float
+    rationale: str
 
 
 # ---------------------------------------------------------------------------
@@ -319,3 +393,178 @@ def get_eval_report() -> EvalReport:
         return EvalReport(**data)
     except Exception:
         return _unavailable
+
+
+# ---------------------------------------------------------------------------
+# Dock endpoints
+# ---------------------------------------------------------------------------
+
+
+def _json_safe(value: str) -> str:
+    """Return a JSON-parseable form of value.
+
+    The replay engine calls json.loads on every blob it serves, so injected
+    content must be valid JSON. A value that already parses (an object/array/
+    number/quoted string) is kept as-is; a bare string like "high" is wrapped
+    into a JSON string ("high") so the fork replays cleanly.
+    """
+    try:
+        json.loads(value)
+        return value
+    except (json.JSONDecodeError, TypeError):
+        return json.dumps(value)
+
+
+def _target_to_edit(target: str, value: str) -> dict:
+    """Translate an injection target + value into a Divergence edit dict."""
+    from trace_store.blob_store import store_blob as _store_blob
+
+    content = _json_safe(value)
+    if target == "result":
+        return {"_result_content": content}
+    elif target == "response":
+        return {"_response_content": content}
+    elif target == "args":
+        return {"args_blob": _store_blob(content)}
+    elif target == "prompt":
+        return {"prompt_blob": _store_blob(content)}
+    else:
+        return {target: value}
+
+
+@app.post("/runs/{run_id}/inject", tags=["dock"])
+def inject(run_id: str, body: InjectRequest) -> Any:
+    """Debug agent: translate a plain-English instruction into an injection.
+
+    Returns available=true with the injection when the LLM is configured, or
+    available=false with a helpful message when GROQ_API_KEY is absent (never 500).
+    """
+    try:
+        doc = store.get_run(run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="run not found")
+
+    try:
+        result = _debug_agent.build_injection(doc, body.instruction)
+    except _llm.LLMNotConfigured:
+        return {"available": False, "detail": "Set GROQ_API_KEY to run the debug agent."}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    inj = result.value
+    return {
+        "available": True,
+        "injection": {
+            "step_id": inj.step_id,
+            "target": inj.target,
+            "value": inj.value,
+        },
+        "confidence": result.confidence,
+        "rationale": result.rationale,
+    }
+
+
+@app.post("/runs/{run_id}/diverge", response_model=DivergeResponse, tags=["dock"])
+def diverge(run_id: str, body: DivergeRequest) -> DivergeResponse:
+    """Fork the run at step_id with the given edit, diff the result.
+
+    Works offline without any LLM key. side_effect_count is always 0.
+    """
+    try:
+        store.get_run(run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="run not found")
+
+    edit = _target_to_edit(body.target, body.value)
+
+    try:
+        div = Divergence(store)
+        fork_run_id = div.fork(run_id, body.step_id, edit)
+        diff = div.compare(run_id, fork_run_id)
+    except DivergenceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    # Replay the fork to get final_status and side_effect_count
+    engine = StoreReplayEngine(store)
+    outcome = engine.replay(fork_run_id)
+
+    return DivergeResponse(
+        fork_run_id=fork_run_id,
+        diff=DivergeDiff(
+            fork_step_id=diff.get("fork_step_id"),
+            original_steps=diff["original_steps"],
+            forked_steps=diff["forked_steps"],
+            edited_fields=diff["edited_fields"],
+        ),
+        final_status=outcome.final_status,
+        side_effect_count=outcome.side_effect_count,
+    )
+
+
+@app.post("/runs/{run_id}/counterfactual", response_model=CounterfactualResponse, tags=["dock"])
+def counterfactual(run_id: str, body: CounterfactualRequest) -> CounterfactualResponse:
+    """Generate and rank N fix variants for a failing step.
+
+    Works offline without GROQ_API_KEY via the template fallback. side_effect_count
+    is always 0 on every variant's outcome.
+    """
+    try:
+        doc = store.get_run(run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="run not found")
+
+    # Resolve step_id: use body value, or fall back to RESOLVES_AT seam, or step 1
+    step_id = body.step_id
+    if step_id is None:
+        resolves_set = RESOLVES_AT.get(run_id, set())
+        step_id = min(resolves_set) if resolves_set else 1
+
+    n = body.n if body.n is not None else 4
+
+    resolves_at = RESOLVES_AT.get(run_id, set())
+    engine = ScriptedReplay(doc, resolves_at)
+
+    # Attempt to resolve the original prompt/result text for the target step
+    original_prompt: Optional[str] = None
+    blob_dir = os.environ.get("CASSETTE_BLOB_DIR", "")
+    if blob_dir:
+        steps_by_id = {s["step_id"]: s for s in doc.get("steps", [])}
+        target_step = steps_by_id.get(step_id)
+        if target_step:
+            blob_ref = target_step.get("prompt_blob") or target_step.get("result_blob")
+            if blob_ref:
+                original_prompt = _try_fetch_blob(blob_ref)
+
+    result = _counterfactual.repair(
+        run_id,
+        step_id,
+        engine=engine,
+        n=n,
+        target="result",
+        original_prompt=original_prompt,
+    )
+
+    variants_out: List[VariantItem] = []
+    for v in result.value:
+        variants_out.append(
+            VariantItem(
+                variant_id=v.variant_id,
+                prompt=v.prompt,
+                resolved=v.resolved,
+                score=v.score,
+                steps_changed=v.steps_changed,
+                side_effect_count=v.outcome.side_effect_count,
+            )
+        )
+
+    winner_id: Optional[str] = None
+    if result.value and result.value[0].resolved:
+        winner_id = result.value[0].variant_id
+
+    return CounterfactualResponse(
+        available=True,
+        variants=variants_out,
+        winner=winner_id,
+        confidence=result.confidence,
+        rationale=result.rationale,
+    )

@@ -46,3 +46,32 @@ export function getMetrics() {
 export function getEval() {
   return _get("/eval");
 }
+
+// ---- POST helpers ----
+
+async function _post(path, body) {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error(`API ${path} returned ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+/** POST /runs/{run_id}/inject  ->  {available, injection?, confidence?, rationale?} | {available:false, detail} */
+export function postInject(runId, instruction) {
+  return _post(`/runs/${encodeURIComponent(runId)}/inject`, { instruction });
+}
+
+/** POST /runs/{run_id}/diverge  ->  {fork_run_id, diff, final_status, side_effect_count} */
+export function postDiverge(runId, { step_id, target, value }) {
+  return _post(`/runs/${encodeURIComponent(runId)}/diverge`, { step_id, target, value });
+}
+
+/** POST /runs/{run_id}/counterfactual  ->  {available, variants?, winner?, confidence?, rationale?} */
+export function postCounterfactual(runId, { step_id, n }) {
+  return _post(`/runs/${encodeURIComponent(runId)}/counterfactual`, { step_id, n });
+}

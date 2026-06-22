@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +88,10 @@ class TraceStore:
 
     def __init__(self, db_path: str | Path = "./cassette.sqlite3") -> None:
         self.db_path = str(db_path)
+        # check_same_thread=False lets the connection be used from the FastAPI
+        # threadpool; _lock serializes access so concurrent requests cannot
+        # misuse the single connection (sqlite raises SQLITE_MISUSE otherwise).
+        self._lock = threading.Lock()
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_DDL)
@@ -110,16 +115,17 @@ class TraceStore:
         """Register a new run.  Must be called before ``append_step``."""
         import time as _time
         ts = created_at_ms if created_at_ms is not None else int(_time.time() * 1000)
-        self._conn.execute(
-            """
-            INSERT INTO runs (
-                run_id, schema_version, agent, created_at_ms,
-                mode, parent_run_id, fork_step_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (run_id, schema_version, agent, ts, mode, parent_run_id, fork_step_id),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO runs (
+                    run_id, schema_version, agent, created_at_ms,
+                    mode, parent_run_id, fork_step_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (run_id, schema_version, agent, ts, mode, parent_run_id, fork_step_id),
+            )
+            self._conn.commit()
 
     def append_step(self, run_id: str, step: dict[str, Any]) -> None:
         """Append one step (llm_call or tool_call) dict to the run.
@@ -137,32 +143,33 @@ class TraceStore:
             else:
                 extras[key] = val
 
-        self._conn.execute(
-            """
-            INSERT INTO steps (
-                run_id, step_id, type, timestamp_ms, latency_ms, status,
-                side_effecting, confidence,
-                prompt_blob, response_blob, args_blob, result_blob,
-                tool, transport, model, extras
-            ) VALUES (
-                :run_id, :step_id, :type, :timestamp_ms, :latency_ms, :status,
-                :side_effecting, :confidence,
-                :prompt_blob, :response_blob, :args_blob, :result_blob,
-                :tool, :transport, :model, :extras
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO steps (
+                    run_id, step_id, type, timestamp_ms, latency_ms, status,
+                    side_effecting, confidence,
+                    prompt_blob, response_blob, args_blob, result_blob,
+                    tool, transport, model, extras
+                ) VALUES (
+                    :run_id, :step_id, :type, :timestamp_ms, :latency_ms, :status,
+                    :side_effecting, :confidence,
+                    :prompt_blob, :response_blob, :args_blob, :result_blob,
+                    :tool, :transport, :model, :extras
+                )
+                """,
+                {
+                    "run_id": run_id,
+                    "extras": json.dumps(extras),
+                    **{k: cols.get(k) for k in (
+                        "step_id", "type", "timestamp_ms", "latency_ms", "status",
+                        "side_effecting", "confidence",
+                        "prompt_blob", "response_blob", "args_blob", "result_blob",
+                        "tool", "transport", "model",
+                    )},
+                },
             )
-            """,
-            {
-                "run_id": run_id,
-                "extras": json.dumps(extras),
-                **{k: cols.get(k) for k in (
-                    "step_id", "type", "timestamp_ms", "latency_ms", "status",
-                    "side_effecting", "confidence",
-                    "prompt_blob", "response_blob", "args_blob", "result_blob",
-                    "tool", "transport", "model",
-                )},
-            },
-        )
-        self._conn.commit()
+            self._conn.commit()
 
     def finish_run(
         self,
@@ -172,11 +179,12 @@ class TraceStore:
         duration_ms: int | None = None,
     ) -> None:
         """Update run-level status and duration once the run completes."""
-        self._conn.execute(
-            "UPDATE runs SET status=?, duration_ms=? WHERE run_id=?",
-            (status, duration_ms, run_id),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE runs SET status=?, duration_ms=? WHERE run_id=?",
+                (status, duration_ms, run_id),
+            )
+            self._conn.commit()
 
     # ------------------------------------------------------------------
     # Read path
@@ -194,11 +202,16 @@ class TraceStore:
         KeyError
             If *run_id* does not exist in the store.
         """
-        row = self._conn.execute(
-            "SELECT * FROM runs WHERE run_id=?", (run_id,)
-        ).fetchone()
-        if row is None:
-            raise KeyError(f"run_id not found: {run_id!r}")
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM runs WHERE run_id=?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"run_id not found: {run_id!r}")
+            step_rows = self._conn.execute(
+                "SELECT * FROM steps WHERE run_id=? ORDER BY step_id",
+                (run_id,),
+            ).fetchall()
 
         doc: dict[str, Any] = {
             "schema_version": row["schema_version"],
@@ -212,11 +225,6 @@ class TraceStore:
             "duration_ms": row["duration_ms"],
             "steps": [],
         }
-
-        step_rows = self._conn.execute(
-            "SELECT * FROM steps WHERE run_id=? ORDER BY step_id",
-            (run_id,),
-        ).fetchall()
 
         for sr in step_rows:
             step: dict[str, Any] = {}
@@ -250,10 +258,11 @@ class TraceStore:
 
     def list_runs(self) -> list[dict[str, Any]]:
         """Return a list of run-level summary dicts (no steps)."""
-        rows = self._conn.execute(
-            "SELECT run_id, agent, created_at_ms, mode, status FROM runs "
-            "ORDER BY created_at_ms DESC"
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT run_id, agent, created_at_ms, mode, status FROM runs "
+                "ORDER BY created_at_ms DESC"
+            ).fetchall()
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
