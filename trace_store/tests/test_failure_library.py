@@ -1,48 +1,32 @@
 """Tests for trace_store/failure_library.py.
 
-Integration tests that talk to a real Supabase project.
-They are skipped automatically when SUPABASE_URL / SUPABASE_KEY are not set
-so the test suite stays green in CI without credentials.
-
-Before running these tests:
-1. Create the ``failure_library`` table (DDL in failure_library.py docstring).
-2. Set SUPABASE_URL and SUPABASE_KEY in your .env or shell.
-
-Run with:
-    pytest trace_store/tests/test_failure_library.py -v
+Tests that run against a temporary SQLite database.
 """
 from __future__ import annotations
 
 import os
 import time
 import uuid
+from pathlib import Path
 
 import pytest
-
-# ---------------------------------------------------------------------------
-# Skip guard — skip the whole module when credentials are absent.
-# ---------------------------------------------------------------------------
-
-_MISSING_CREDS = not (os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_KEY"))
-
-pytestmark = pytest.mark.skipif(
-    _MISSING_CREDS,
-    reason=(
-        "SUPABASE_URL and SUPABASE_KEY are not set. "
-        "Add them to .env to run the failure_library integration tests."
-    ),
-)
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
-@pytest.fixture(scope="module")
-def store():
-    """Return a FailureLibraryStore connected to the real Supabase project."""
+@pytest.fixture()
+def temp_db_path(tmp_path) -> Path:
+    """Return a path to a temporary SQLite database file."""
+    return tmp_path / "test_cassette.sqlite3"
+
+
+@pytest.fixture()
+def store(temp_db_path):
+    """Return a FailureLibraryStore connected to a temporary SQLite database."""
     from trace_store.failure_library import FailureLibraryStore
-    return FailureLibraryStore()
+    with FailureLibraryStore(db_path=temp_db_path) as s:
+        yield s
 
 
 @pytest.fixture()
@@ -64,7 +48,7 @@ class TestWriteEntry:
             agent_config="v1.0",
             determinism_rate=0.95,
         )
-        assert "id" in row, "Supabase must assign an id"
+        assert "id" in row, "SQLite must assign an id"
         assert row["failure_pattern"] == unique_pattern
         assert row["blame_step"] == 2
         assert row["fix_that_worked"] == "explicit enum constraint"
@@ -86,7 +70,7 @@ class TestWriteEntry:
             blame_step=1,
             fix_that_worked="fix",
         )
-        assert "created_at" in row and row["created_at"], "Supabase must set created_at"
+        assert "created_at" in row and row["created_at"], "SQLite must set created_at"
 
 
 # ---------------------------------------------------------------------------
@@ -101,9 +85,6 @@ class TestQuery:
             blame_step=2,
             fix_that_worked="explicit enum",
         )
-        # Allow a moment for write to propagate (Supabase is fast but not
-        # instantaneous in some regions).
-        time.sleep(0.3)
 
         rows = store.query(pattern_fragment=sentinel)
         assert len(rows) >= 1, f"Expected at least one row matching {sentinel!r}"
@@ -117,7 +98,6 @@ class TestQuery:
             blame_step=7,
             fix_that_worked="fix step 7",
         )
-        time.sleep(0.3)
 
         rows = store.query(blame_step=7, pattern_fragment=sentinel)
         assert all(r["blame_step"] == 7 for r in rows)
@@ -134,7 +114,6 @@ class TestQuery:
             blame_step=9,
             fix_that_worked="other fix",
         )
-        time.sleep(0.3)
 
         rows = store.query(pattern_fragment=sentinel, blame_step=3)
         assert all(r["blame_step"] == 3 for r in rows)
@@ -148,7 +127,6 @@ class TestQuery:
                 blame_step=1,
                 fix_that_worked="fix",
             )
-        time.sleep(0.3)
 
         rows = store.query(pattern_fragment=sentinel, limit=3)
         assert len(rows) <= 3
@@ -161,11 +139,11 @@ class TestQuery:
                 blame_step=i,
                 fix_that_worked="fix",
             )
-            time.sleep(0.1)  # ensure distinct created_at values
+            time.sleep(0.01)
         rows = store.query(pattern_fragment=sentinel)
         assert len(rows) >= 3
-        # created_at strings are ISO-8601 and sort lexicographically.
         created_ats = [r["created_at"] for r in rows[:3]]
+        # created_at strings are ISO-8601 and sort lexicographically.
         assert created_ats == sorted(created_ats, reverse=True)
 
 
@@ -182,7 +160,6 @@ class TestGetAll:
                 blame_step=1,
                 fix_that_worked="fix",
             )
-        time.sleep(0.3)
         rows = store.get_all(limit=3)
         assert len(rows) <= 3
 
@@ -192,7 +169,11 @@ class TestGetAll:
 # ---------------------------------------------------------------------------
 
 class TestErrorHandling:
-    def test_missing_credentials_raises(self):
+    def test_invalid_db_path_raises(self):
         from trace_store.failure_library import FailureLibraryStore, FailureLibraryError
-        with pytest.raises(FailureLibraryError, match="SUPABASE_URL"):
-            FailureLibraryStore(url="", key="")
+        # In SQLite, attempting to connect to a directory as a file raises sqlite3.OperationalError
+        # or similar, which should be wrapped in FailureLibraryError.
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with pytest.raises(FailureLibraryError):
+                FailureLibraryStore(db_path=tmpdir)
