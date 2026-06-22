@@ -59,6 +59,7 @@ WORK_DISTRIBUTION.md
 # Local design / planning notes (kept local, never pushed; module READMEs are not affected)
 ai_agents/docs/
 recorder/superpowers/
+docs/superpowers/
 
 # Translations
 *.mo

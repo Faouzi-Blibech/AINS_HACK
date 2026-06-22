@@ -1,0 +1,16 @@
+# pyproject.toml  (repo root: AINS_HACK/pyproject.toml)
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cassette"
+version = "0.1.0"
+description = "Flight recorder and deterministic replay engine for AI agents"
+requires-python = ">=3.10"
+
+[project.scripts]
+cassette = "cassette.cli:main"
+
+[tool.setuptools]
+packages = ["cassette", "recorder", "trace_store", "replay_engine", "ai_agents", "api"]
