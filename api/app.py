@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
+import uuid
 from pathlib import Path
 from typing import Any, List, Optional, Union
 
@@ -260,6 +263,90 @@ class CounterfactualResponse(BaseModel):
     winner: Optional[str] = None
     confidence: float
     rationale: str
+
+
+# ---------------------------------------------------------------------------
+# Agent run models
+# ---------------------------------------------------------------------------
+
+# Provider presets: name -> (base_url, default_model)
+_PROVIDER_PRESETS: dict[str, tuple[str, str]] = {
+    "nvidia_nim": ("https://integrate.api.nvidia.com/v1", "meta/llama-3.1-8b-instruct"),
+    "huggingface": ("https://router.huggingface.co/v1", "meta-llama/Llama-3.1-8B-Instruct"),
+    "groq": ("https://api.groq.com/openai/v1", "llama3-8b-8192"),
+}
+
+
+class AgentRunRequest(BaseModel):
+    provider: Optional[str] = None
+    base_url: Optional[str] = None
+    model: str
+    api_key: str
+    task: str
+
+
+class AgentRunResponse(BaseModel):
+    run_id: str
+    status: str
+    steps: int
+
+
+class ConnectHttpInfo(BaseModel):
+    env_vars: dict[str, str]
+    command: str
+
+
+class ConnectInfo(BaseModel):
+    http: ConnectHttpInfo
+    mcp: str
+    sdk: str
+
+
+# ---------------------------------------------------------------------------
+# Agent launch helper (monkeypatchable in tests)
+# ---------------------------------------------------------------------------
+
+
+_AGENT_RUN_TIMEOUT = int(os.environ.get("CASSETTE_AGENT_RUN_TIMEOUT", "300"))
+
+
+def _scrub_subprocess_output(text: str, api_key: str, base_url: str) -> str:
+    """Remove api_key and base_url from subprocess output; truncate to last 1500 chars."""
+    if api_key:
+        text = text.replace(api_key, "***")
+    if base_url:
+        text = text.replace(base_url, "***")
+    # Keep only the tail so the most-recent error context is preserved.
+    if len(text) > 1500:
+        text = "...(truncated)...\n" + text[-1500:]
+    return text.strip()
+
+
+def _launch_hosted_run(
+    run_id: str,
+    base_url: str,
+    model: str,
+    api_key: str,
+    task: str,
+) -> subprocess.CompletedProcess:
+    """Launch recorder.run_hosted in a subprocess. Isolated so tests can monkeypatch."""
+    env = {
+        **os.environ,
+        "CASSETTE_HOSTED_BASE_URL": base_url,
+        "CASSETTE_HOSTED_KEY": api_key,
+    }
+    cmd = [
+        sys.executable, "-m", "recorder.run_hosted",
+        "--run-id", run_id,
+        "--db", DB_PATH,
+        "--blob-dir", os.environ["CASSETTE_BLOB_DIR"],
+        "--model", model,
+        "--task", task,
+    ]
+    return subprocess.run(
+        cmd, capture_output=True, text=True,
+        timeout=_AGENT_RUN_TIMEOUT, env=env,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -621,4 +708,93 @@ def counterfactual(run_id: str, body: CounterfactualRequest) -> CounterfactualRe
         winner=winner_id,
         confidence=result.confidence,
         rationale=result.rationale,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Agent connect endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.post("/agents/run", response_model=AgentRunResponse, tags=["agents"])
+def agents_run(body: AgentRunRequest) -> AgentRunResponse:
+    """Launch a hosted-model run via the recorder subprocess and record it.
+
+    The api_key is passed to the subprocess only via environment variable.
+    It is never logged and never included in any error response body.
+    """
+    # Resolve base_url: explicit value wins, then preset, else 422.
+    resolved_base_url = body.base_url
+    if not resolved_base_url and body.provider:
+        preset = _PROVIDER_PRESETS.get(body.provider)
+        if preset:
+            resolved_base_url = preset[0]
+    if not resolved_base_url:
+        raise HTTPException(
+            status_code=422,
+            detail="Provide either 'base_url' or a valid 'provider' preset.",
+        )
+
+    run_id = f"agent-{uuid.uuid4().hex[:8]}"
+
+    try:
+        proc = _launch_hosted_run(
+            run_id=run_id,
+            base_url=resolved_base_url,
+            model=body.model,
+            api_key=body.api_key,
+            task=body.task,
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                f"Run exceeded {_AGENT_RUN_TIMEOUT}s; "
+                "try a faster model or raise CASSETTE_AGENT_RUN_TIMEOUT."
+            ),
+        )
+
+    if proc.returncode != 0:
+        combined = (proc.stderr or "") + (proc.stdout or "")
+        scrubbed = _scrub_subprocess_output(combined, body.api_key, resolved_base_url)
+        detail = scrubbed or f"Runner exited with code {proc.returncode}."
+        print(f"[agents/run] runner failed (code {proc.returncode}): {detail}")
+        raise HTTPException(status_code=502, detail=detail)
+
+    try:
+        run_doc = store.get_run(run_id)
+        steps = len(run_doc.get("steps", []))
+    except KeyError:
+        steps = 0
+
+    return AgentRunResponse(run_id=run_id, status="ok", steps=steps)
+
+
+@app.get("/agents/connect-info", response_model=ConnectInfo, tags=["agents"])
+def agents_connect_info() -> ConnectInfo:
+    """Return bring-your-own connect instructions for each transport type.
+
+    This endpoint is purely informational; it does not execute anything.
+    """
+    return ConnectInfo(
+        http=ConnectHttpInfo(
+            env_vars={
+                "HTTP_PROXY": "http://localhost:8080",
+                "HTTPS_PROXY": "http://localhost:8080",
+                "SSL_CERT_FILE": "/path/to/cassette-ca.pem",
+            },
+            command="python -m recorder.record -- <your agent command>",
+        ),
+        mcp=(
+            "python -m recorder.record --mcp -- <your agent command>\n"
+            "The recorder wraps your agent and captures all MCP tool calls automatically."
+        ),
+        sdk=(
+            "from recorder.sdk_hooks import record_tool\n\n"
+            "# Wrap any side-effecting tool:\n"
+            "@record_tool(side_effecting=True)\n"
+            "def my_tool(arg): ...\n\n"
+            "# Then drive the session with:\n"
+            "python -m recorder.record_session -- <your agent command>"
+        ),
     )
