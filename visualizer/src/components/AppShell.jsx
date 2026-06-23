@@ -13,11 +13,11 @@ const ICONS = {
 };
 
 const NAV_ITEMS = [
-  { label: "Runs", to: "/", end: true, icon: "runs", count: 6 },
-  { label: "Trace", to: "/runs/latest", end: false, icon: "trace", count: 9, matchPrefix: "/runs/" },
-  { label: "Failure memory", to: "/memory", end: false, icon: "memory", count: 14 },
-  { label: "Evaluation", to: "/eval", end: true, icon: "eval" },
   { label: "Connect agent", to: "/connect", end: true, icon: "connect" },
+  { label: "Runs", to: "/", end: true, icon: "runs" },
+  { label: "Trace", to: "/runs/latest", end: false, icon: "trace", matchPrefix: "/runs/" },
+  { label: "Failure memory", to: "/memory", end: false, icon: "memory" },
+  { label: "Evaluation", to: "/eval", end: true, icon: "eval" },
 ];
 
 function CassetteLogoMark() {
@@ -503,73 +503,6 @@ export default function AppShell() {
 
         {/* Spacer */}
         <div style={{ flex: 1 }} />
-
-        {/* Agent footer */}
-        <div
-          style={{
-            padding: 16,
-            borderTop: "1px solid var(--bd)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 11,
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 11,
-              padding: "11px 12px",
-              border: "1px solid var(--bd)",
-              borderRadius: 12,
-              background: "var(--bg2)",
-            }}
-          >
-            <div style={{ position: "relative", flex: "none" }}>
-              <span
-                style={{
-                  width: 9,
-                  height: 9,
-                  borderRadius: "50%",
-                  background: "var(--pass)",
-                  boxShadow: "0 0 0 3px var(--pass-dim)",
-                  display: "block",
-                }}
-              />
-              <span
-                style={{
-                  position: "absolute",
-                  inset: -3,
-                  borderRadius: "50%",
-                  border: "1px solid var(--pass)",
-                  opacity: 0.5,
-                  animation: "glowpulse 2s ease-in-out infinite",
-                }}
-              />
-            </div>
-            <div style={{ minWidth: 0 }}>
-              <div
-                style={{
-                  font: "550 11px var(--mono)",
-                  color: "var(--fg1)",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                triage-agent v2.3.1
-              </div>
-              <div
-                style={{
-                  font: "450 9.5px var(--mono)",
-                  color: "var(--fg2)",
-                }}
-              >
-                engine v0.9 live
-              </div>
-            </div>
-          </div>
-        </div>
       </aside>
 
       {/* Main content area */}

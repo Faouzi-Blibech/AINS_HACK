@@ -4,6 +4,11 @@ import { postAgentRun, getConnectInfo } from "../api/client.js";
 
 // Provider presets matching the backend _PROVIDER_PRESETS
 const PRESETS = {
+  groq: {
+    label: "Groq (recommended)",
+    base_url: "https://api.groq.com/openai/v1",
+    default_model: "llama-3.3-70b-versatile",
+  },
   nvidia_nim: {
     label: "NVIDIA NIM",
     base_url: "https://integrate.api.nvidia.com/v1",
@@ -13,11 +18,6 @@ const PRESETS = {
     label: "Hugging Face",
     base_url: "https://router.huggingface.co/v1",
     default_model: "meta-llama/Llama-3.1-8B-Instruct",
-  },
-  groq: {
-    label: "Groq",
-    base_url: "https://api.groq.com/openai/v1",
-    default_model: "llama3-8b-8192",
   },
   custom: {
     label: "Custom",
@@ -192,11 +192,13 @@ function ErrorBanner({ message }) {
 function QuickTestPanel() {
   const navigate = useNavigate();
 
-  const [provider, setProvider] = useState("nvidia_nim");
-  const [baseUrl, setBaseUrl] = useState(PRESETS.nvidia_nim.base_url);
-  const [model, setModel] = useState(PRESETS.nvidia_nim.default_model);
+  const [provider, setProvider] = useState("groq");
+  const [baseUrl, setBaseUrl] = useState(PRESETS.groq.base_url);
+  const [model, setModel] = useState(PRESETS.groq.default_model);
   const [apiKey, setApiKey] = useState("");
-  const [task, setTask] = useState("");
+  const [task, setTask] = useState(
+    "Look up the current status and owner of project Alpha, then submit a one-sentence summary of its health."
+  );
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
 
@@ -259,7 +261,8 @@ function QuickTestPanel() {
         }}
       >
         Run a live agent call through a hosted model and record the trace. Runs need a model API key.
-        Free tiers available on NVIDIA NIM and Hugging Face. The bundled demo still replays with no key.
+        Groq is recommended for reliable tool calling (free tier); NVIDIA NIM and Hugging Face also work.
+        The bundled demo still replays with no key.
       </p>
 
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
