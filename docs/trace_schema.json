@@ -14,7 +14,7 @@
       "type": "string",
       "pattern": "^\\d+\\.\\d+$",
       "description": "Semver (major.minor) of the trace schema. Readers use this to handle older traces without guessing which fields exist.",
-      "default": "1.0"
+      "default": "1.1"
     },
     "run_id": {
       "type": "string",
@@ -108,6 +108,10 @@
             "type": "integer"
           },
           "description": "step_ids whose outputs caused this step. Array to support fan-in (e.g. parallel tool calls whose results are synthesised by a single LLM call). Empty array means no causal parent (first step). Used by the Temporal Blame Graph."
+        },
+        "parallel_group": {
+          "type": ["string", "null"],
+          "description": "UUID shared by all tool_call steps dispatched simultaneously from a single LLM response. null or absent = sequential step. Order within the group reflects arrival order (whichever thread completed first), not dispatch order. Set by the recorder at the moment it observes multiple tool calls in one LLM message."
         },
         "side_effecting": {
           "type": "boolean",
