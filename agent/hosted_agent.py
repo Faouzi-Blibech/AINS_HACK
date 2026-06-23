@@ -81,15 +81,20 @@ def call_model(messages: list[dict]) -> dict:
     }
     r = httpx.post(f"{base_url}/chat/completions", json=payload, headers=headers, timeout=60)
 
-    if r.status_code >= 400 and r.status_code < 500:
-        # Retry without tools (reasoning models often reject the tools field).
-        payload_no_tools = {k: v for k, v in payload.items() if k != "tools"}
-        r = httpx.post(
-            f"{base_url}/chat/completions",
-            json=payload_no_tools,
-            headers=headers,
-            timeout=60,
-        )
+    if not r.is_success and r.status_code < 500:
+        # Only drop the tools field when the error is clearly about tools/function
+        # calling (some reasoning models reject it). For any other 4xx (auth, bad
+        # model id, quota) do NOT silently retry tool-less -- that hides the real
+        # problem and yields a misleading single-step, tool-free trace.
+        body_lower = (r.text or "").lower()
+        if "tool" in body_lower or "function" in body_lower:
+            payload_no_tools = {k: v for k, v in payload.items() if k != "tools"}
+            r = httpx.post(
+                f"{base_url}/chat/completions",
+                json=payload_no_tools,
+                headers=headers,
+                timeout=60,
+            )
 
     if not r.is_success:
         raise RuntimeError(

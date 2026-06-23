@@ -260,8 +260,8 @@ class TraceStore:
         """Return a list of run-level summary dicts (no steps)."""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT run_id, agent, created_at_ms, mode, status FROM runs "
-                "ORDER BY created_at_ms DESC"
+                "SELECT run_id, agent, created_at_ms, mode, status, parent_run_id "
+                "FROM runs ORDER BY created_at_ms DESC"
             ).fetchall()
         return [dict(r) for r in rows]
 

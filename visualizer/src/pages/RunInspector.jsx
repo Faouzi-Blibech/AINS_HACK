@@ -301,7 +301,8 @@ export default function RunInspector() {
   }
 
   const agentLabel = trace.agent ?? "agent";
-  const runSummary = "Checkout 500 -> wrong team assignment";
+  const stepCount = trace.steps?.length ?? 0;
+  const runSummary = `${stepCount} step${stepCount === 1 ? "" : "s"} · ${trace.status ?? trace.mode ?? "record"}`;
 
   return (
     <div

@@ -3,7 +3,7 @@
 > A flight recorder for AI agents: **record** any live run, **replay** it deterministically with zero live API calls, and let an AI debugging layer tell you **why it failed** and **which fix works**, without ever touching production.
 
 **AINS Hackathon 2026 · AI for Enterprise Automation · Use Case 2**
-First submission: Concept & Prototype Foundation.
+Working prototype: record, deterministic replay, divergence, an AI blame + counterfactual debugging layer, and a live evaluation report, all behind a full UI.
 
 ## Quickstart
 
@@ -215,20 +215,35 @@ Each module has its own `README.md` describing its responsibility and interface.
 
 ## 10. Status
 
-The recording/replay spine is working end to end: record → store → deterministic replay over
-**all three transports** (HTTP, MCP, SDK), captured into one schema-valid trace and replayed
-with zero live endpoints and side-effect containment (`live_executed: 0`). The architecture,
-shared trace contract, module boundaries, and evaluation plan are in place; the AI analysis
-layer and UI build on this substrate for the final submission.
+Working end to end. Record → store → **deterministic replay** over **all three transports**
+(HTTP, MCP, SDK), captured into one schema-valid trace and replayed with zero live endpoints
+and side-effect containment (`side_effect_count: 0`). On top of that substrate the full system
+is live: the **transparent proxy** + a hosted "Connect agent" quick test, the **Temporal Blame
+Graph**, the **AI debug agent** (plain-English fix → fork → pass/fail verdict), **counterfactual**
+ranking by real replay outcomes, a **failure-memory** library that learns from resolved failures,
+and a **live evaluation report** computed from the recorded runs — all behind a React UI.
 
 ---
 
-## 11. Setup (prototype, work in progress)
+## 11. Setup
+
+**Demo (no key needed — replays bundled recordings):**
+
+```bash
+docker compose up --build
+# open http://localhost:5173
+```
+
+**Record live runs:** add `GROQ_API_KEY` to `.env` (see `.env.example`), then use
+Connect agent → Quick test (Groq recommended) in the UI, or `cassette run -- <your agent>`.
+
+**Run the test suite:**
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+python -m pytest -q --import-mode=importlib
 ```
 
 ---

@@ -72,7 +72,10 @@ function Spinner() {
 
 // ---- Debug agent tab ----
 
-function DebugAgentTab({ runId, selectedStepId, steps }) {
+const FAIL_STATES = ["error", "failed", "timeout", "aborted"];
+const OK_STATES = ["ok", "passed"];
+
+function DebugAgentTab({ runId, selectedStepId, steps, originalStatus }) {
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -131,6 +134,22 @@ function DebugAgentTab({ runId, selectedStepId, steps }) {
     injectResult && !injectResult.available
       ? injectResult.detail ?? "Injection not available (no key configured)."
       : null;
+
+  // Verdict: compare the original run status to the forked replay status so the
+  // user gets a clear "did my fix work?" answer, not just a raw status string.
+  const verdict = (() => {
+    if (!divergeResult || divergeResult._error) return null;
+    const fs = divergeResult.final_status;
+    const origFailed = FAIL_STATES.includes(originalStatus);
+    const forkOk = OK_STATES.includes(fs);
+    if (origFailed && forkOk)
+      return { tone: "good", text: `Fix resolves the failure — run now passes (was ${originalStatus} → ${fs}).` };
+    if (origFailed && !forkOk)
+      return { tone: "bad", text: `Fix does not resolve the failure — still ${fs} (was ${originalStatus}).` };
+    if (!origFailed && forkOk)
+      return { tone: "neutral", text: `Original run already passed; the fork also passes (${fs}). No failure to resolve here.` };
+    return { tone: "bad", text: `This edit breaks a previously passing run (now ${fs}).` };
+  })();
 
   return (
     <div style={{ display: "flex", gap: 22, height: "100%" }}>
@@ -229,6 +248,43 @@ function DebugAgentTab({ runId, selectedStepId, steps }) {
             Forking replay...
           </div>
         )}
+        {verdict && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: "11px 14px",
+              borderRadius: 10,
+              border: `1px solid ${
+                verdict.tone === "good"
+                  ? "var(--pass)"
+                  : verdict.tone === "bad"
+                  ? "var(--fail)"
+                  : "var(--bd2)"
+              }`,
+              background:
+                verdict.tone === "good"
+                  ? "var(--pass-dim)"
+                  : verdict.tone === "bad"
+                  ? "var(--fail-dim)"
+                  : "var(--bg2)",
+              color:
+                verdict.tone === "good"
+                  ? "var(--pass)"
+                  : verdict.tone === "bad"
+                  ? "var(--fail)"
+                  : "var(--fg1)",
+              font: "600 12px var(--ui)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            <span style={{ fontSize: 14, flex: "none" }}>
+              {verdict.tone === "good" ? "✓" : verdict.tone === "bad" ? "✗" : "•"}
+            </span>
+            <span>{verdict.text}</span>
+          </div>
+        )}
         {divergeResult && !divergeResult._error && (
           <div
             style={{
@@ -252,12 +308,11 @@ function DebugAgentTab({ runId, selectedStepId, steps }) {
                 style={{
                   fontFamily: "var(--mono)",
                   fontSize: 10.5,
-                  color:
-                    divergeResult.final_status === "passed"
-                      ? "var(--pass)"
-                      : divergeResult.final_status === "failed"
-                      ? "var(--fail)"
-                      : "var(--fg1)",
+                  color: OK_STATES.includes(divergeResult.final_status)
+                    ? "var(--pass)"
+                    : FAIL_STATES.includes(divergeResult.final_status)
+                    ? "var(--fail)"
+                    : "var(--fg1)",
                 }}
               >
                 {divergeResult.final_status ?? "unknown"}
@@ -643,6 +698,7 @@ function DivergenceTab({ runId, selectedStepId, trace, steps }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const [whatIf, setWhatIf] = useState("high");
 
   // Determine step to fork at and pick target type
   const forkStepId = selectedStepId ?? steps?.[0]?.step_id ?? null;
@@ -658,7 +714,7 @@ function DivergenceTab({ runId, selectedStepId, trace, steps }) {
       const data = await postDiverge(runId, {
         step_id: forkStepId,
         target,
-        value: "high",
+        value: whatIf,
       });
       setResult(data);
     } catch (err) {
@@ -729,11 +785,30 @@ function DivergenceTab({ runId, selectedStepId, trace, steps }) {
         </span>
 
         {!result && (
+          <input
+            value={whatIf}
+            onChange={(e) => setWhatIf(e.target.value)}
+            placeholder="what-if value"
+            title="The alternative value to inject at this step"
+            style={{
+              marginLeft: "auto",
+              width: 170,
+              background: "var(--bg2)",
+              border: "1px solid var(--bd)",
+              borderRadius: 9,
+              padding: "8px 11px",
+              font: "450 12px var(--mono)",
+              color: "var(--fg0)",
+              outline: "none",
+            }}
+          />
+        )}
+        {!result && (
           <button
             onClick={handleFork}
             disabled={loading || forkStepId == null}
             style={{
-              marginLeft: "auto",
+              marginLeft: 8,
               background:
                 loading || forkStepId == null ? "var(--bg3)" : "var(--accent)",
               color: loading || forkStepId == null ? "var(--fg2)" : "#fff",
@@ -1016,6 +1091,7 @@ export default function Dock({ trace, blame, selectedStepId }) {
             runId={runId}
             selectedStepId={selectedStepId}
             steps={steps}
+            originalStatus={trace?.status}
           />
         )}
         {activeTab === "Counterfactuals" && (
