@@ -99,7 +99,14 @@ def record_llm(fn):
         # Build and append the llm_call step directly (mirrors record_sdk /
         # build_sdk_step but uses llm_call type + prompt/response blobs).
         sid = sess.next_step_id()
-        prev = sid - 1 if sid > 1 else None
+        # Fan-in: the first llm_call after a parallel batch synthesises the
+        # siblings' results, so its causal_parents are all the sibling step_ids.
+        fanin = sess.consume_fanin_parents()
+        if fanin is not None:
+            causal_parents = fanin
+        else:
+            prev = sid - 1 if sid > 1 else None
+            causal_parents = [prev] if prev else []
         model = os.environ.get("CASSETTE_HOSTED_MODEL", "")
         prompt_text = sess.policy.redact_body(json.dumps(messages, default=str))
         response_text = sess.policy.redact_body(json.dumps(result, default=str))
@@ -112,7 +119,7 @@ def record_llm(fn):
             "status": "ok",
             "side_effecting": False,
             "confidence": None,
-            "causal_parents": [prev] if prev else [],
+            "causal_parents": causal_parents,
             "model": model,
             "prompt_blob": store_blob(prompt_text),
             "response_blob": store_blob(response_text),
@@ -121,6 +128,11 @@ def record_llm(fn):
             sess.store.append_step(sess.run_id, step)
         except Exception as exc:
             print(f"[cassette] failed to record llm step: {exc}")
+
+        # Arm a parallel group when this response dispatched >=2 tool calls so
+        # the following tool_call steps share one parallel_group UUID.
+        tool_calls = result.get("tool_calls") if isinstance(result, dict) else None
+        sess.arm_parallel_group(len(tool_calls or []), sid)
 
         return result
     return wrapper

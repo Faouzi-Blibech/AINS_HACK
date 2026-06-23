@@ -34,6 +34,7 @@ def record_run(*, run_id: str, store: TraceStore) -> dict:
         run_id=run_id,
         policy=policy,
         register_run=True,
+        schema_version="1.1",  # emits parallel_group for multi-tool model responses
     )
 
     # Save originals for clean teardown.

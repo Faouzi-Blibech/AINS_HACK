@@ -301,6 +301,96 @@ def test_reasoning_content_used_when_content_empty(monkeypatch):
     assert msg["content"] == "my reasoning answer"
 
 
+def test_parallel_tool_calls_share_group_and_causal_parents(monkeypatch):
+    """A model response dispatching two tools in one turn -> both tool steps
+    share one parallel_group, point their causal parent at the dispatching
+    llm_call, and the fan-in llm_call points back at both siblings (schema 1.1).
+    """
+    parallel_call = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {"id": "p1", "type": "function",
+             "function": {"name": "lookup_info",
+                          "arguments": json.dumps({"query": "alpha"})}},
+            {"id": "p2", "type": "function",
+             "function": {"name": "lookup_info",
+                          "arguments": json.dumps({"query": "beta"})}},
+        ],
+    }
+    trace = _run(monkeypatch, [parallel_call, _FINAL_RESPONSE], run_id="parallel-run")
+    steps = trace["steps"]
+
+    # Schema advertises the parallel-aware version.
+    assert trace["schema_version"] == "1.1"
+
+    llm_steps = [s for s in steps if s["type"] == "llm_call"]
+    tool_steps = [s for s in steps if s["type"] == "tool_call"]
+    assert len(llm_steps) == 2, f"expected dispatch + fan-in llm_calls; got {llm_steps}"
+    assert len(tool_steps) == 2, f"expected 2 batched tool_calls; got {tool_steps}"
+
+    dispatch_id = llm_steps[0]["step_id"]
+    fanin = llm_steps[1]
+
+    # Both tools share one non-null parallel_group...
+    groups = {s.get("parallel_group") for s in tool_steps}
+    assert len(groups) == 1 and None not in groups, f"tool parallel_groups: {groups}"
+
+    # ...and each points its causal parent at the dispatching llm_call.
+    for s in tool_steps:
+        assert s["causal_parents"] == [dispatch_id], s["causal_parents"]
+
+    # The fan-in llm_call's causal_parents are exactly the two sibling step_ids.
+    assert sorted(fanin["causal_parents"]) == sorted(s["step_id"] for s in tool_steps)
+
+
+def test_single_tool_call_has_no_parallel_group(monkeypatch):
+    """A lone tool call must NOT be tagged with a parallel_group (sequential)."""
+    trace = _run(monkeypatch, [_TOOL_CALL_RESPONSE, _FINAL_RESPONSE], run_id="seq-run")
+    tool_steps = [s for s in trace["steps"] if s["type"] == "tool_call"]
+    assert tool_steps
+    for s in tool_steps:
+        assert s.get("parallel_group") is None, s.get("parallel_group")
+
+
+def test_replay_sdk_passes_tool_hint_when_supported():
+    """replay_sdk forwards the tool name as tool_hint to a replayer that accepts it."""
+    from recorder.policy import load_policy
+    from recorder.session import RecordingSession
+
+    captured = {}
+
+    class HintReplayer:
+        def response_for(self, ident, tool_hint=None):
+            captured["tool_hint"] = tool_hint
+            return {"status_code": 200, "body": json.dumps({"ok": True}),
+                    "side_effecting": False}
+
+    sess = RecordingSession(mode="replay", store=_store(), run_id="hint-run",
+                            policy=load_policy(), replayer=HintReplayer(),
+                            register_run=False)
+    out = sess.replay_sdk(tool="lookup_info", args={"query": "x"}, side_effecting=False)
+    assert captured["tool_hint"] == "lookup_info"
+    assert out == {"ok": True}
+
+
+def test_replay_sdk_falls_back_for_replayer_without_tool_hint():
+    """replay_sdk still works with a replayer whose response_for has no tool_hint."""
+    from recorder.policy import load_policy
+    from recorder.session import RecordingSession
+
+    class PlainReplayer:
+        def response_for(self, ident):
+            return {"status_code": 200, "body": json.dumps({"ok": 1}),
+                    "side_effecting": False}
+
+    sess = RecordingSession(mode="replay", store=_store(), run_id="plain-run",
+                            policy=load_policy(), replayer=PlainReplayer(),
+                            register_run=False)
+    out = sess.replay_sdk(tool="lookup_info", args={"query": "x"}, side_effecting=False)
+    assert out == {"ok": 1}
+
+
 def test_run_hosted_does_not_import_mitmproxy():
     """run_hosted must not contain import statements for the proxy-path modules.
 
