@@ -110,13 +110,27 @@ class Divergence:
             fork_step_id=fork_step_id,
         )
 
-        # Copy steps 1 .. fork_step_id-1 verbatim
+        # Determine the parallel group of the fork step (if any) upfront so that
+        # the pre-fork copy loop can skip siblings that will be handled separately.
+        fork_step = next(s for s in steps if s["step_id"] == fork_step_id)
+        fork_pg = fork_step.get("parallel_group")
+
+        # Collect sibling step_ids to exclude from the sequential pre-fork copy.
+        sibling_step_ids: set[int] = set()
+        if fork_pg:
+            sibling_step_ids = {
+                s["step_id"]
+                for s in steps
+                if s.get("parallel_group") == fork_pg and s["step_id"] != fork_step_id
+            }
+
+        # Copy steps 1 .. fork_step_id-1, excluding any parallel siblings
+        # (siblings are written later with their original recorded payloads).
         for step in steps:
-            if step["step_id"] < fork_step_id:
+            if step["step_id"] < fork_step_id and step["step_id"] not in sibling_step_ids:
                 self.store.append_step(forked_id, step)
 
         # Build the edited step
-        fork_step = next(s for s in steps if s["step_id"] == fork_step_id)
         edited_step = dict(fork_step)
 
         # Handle convenience content keys — store blob, set ref
@@ -132,6 +146,22 @@ class Divergence:
 
         edited_step.update(edit)
         self.store.append_step(forked_id, edited_step)
+
+        # Copy parallel siblings into the fork.
+        # If the fork step belongs to a parallel_group, all other steps in that
+        # group are siblings: dispatched at the same time as the fork step, not
+        # causally after it. Their recorded results are independent of the edit
+        # and should be replayed from tape, not synthesized.
+        # The fan-in LLM step that follows the group is intentionally NOT copied
+        # — it will be driven live by the record-over proxy (or scored by the
+        # blame engine using the synthesizer).
+        if fork_pg:
+            for step in steps:
+                if (
+                    step["step_id"] != fork_step_id  # already written above
+                    and step.get("parallel_group") == fork_pg
+                ):
+                    self.store.append_step(forked_id, step)
 
         return forked_id
 
@@ -164,9 +194,20 @@ class Divergence:
             if orig_step.get(k) != fork_step.get(k)
         ]
 
+        # Parallel siblings included in the fork (step_ids only).
+        fork_pg = fork_step.get("parallel_group")
+        parallel_siblings_in_fork = [
+            s["step_id"]
+            for s in fork["steps"]
+            if s.get("parallel_group") == fork_pg
+            and fork_pg is not None
+            and s["step_id"] != fork_step_id
+        ]
+
         return {
             "fork_step_id": fork_step_id,
             "original_steps": len(orig["steps"]),
             "forked_steps": len(fork["steps"]),
             "edited_fields": edited_fields,
+            "parallel_siblings_in_fork": parallel_siblings_in_fork,
         }
