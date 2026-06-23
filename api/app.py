@@ -26,9 +26,8 @@ from api_contract_sketch import (
     RunSummary,
     Trace,
 )
-from api.failure_memory import FAILURE_MEMORY
-from api.seed import seed_store
-from trace_store.store import TraceStore
+from api.seed import seed_store, seed_failure_library
+from trace_store import TraceStore, FailureLibraryStore
 from trace_store.blob_store import fetch_blob
 from ai_agents.root_cause import analyze, ScriptedReplay
 from ai_agents.trace_content import make_resolver
@@ -89,6 +88,9 @@ EVAL_RESULTS_PATH = os.environ.get(
 
 store = TraceStore(DB_PATH)
 seed_store(store)
+
+failure_store = FailureLibraryStore(DB_PATH)
+seed_failure_library(failure_store)
 
 # ---------------------------------------------------------------------------
 # FastAPI app
@@ -385,15 +387,23 @@ def query_failure_library(
     Optional ?q=<text> filters entries whose failure_pattern or fix_that_worked
     contains the query string (case-insensitive). Full semantic search comes later.
     """
-    entries = FAILURE_MEMORY
-    if q:
-        q_lower = q.lower()
-        entries = [
-            e for e in entries
-            if q_lower in e["failure_pattern"].lower()
-            or q_lower in e["fix_that_worked"].lower()
-        ]
-    parsed = [FailureLibraryEntry(**e) for e in entries]
+    try:
+        entries = failure_store.query(pattern_fragment=q)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Database query failed: {exc}")
+    
+    formatted = []
+    for e in entries:
+        d = dict(e)
+        if d.get("id") is not None:
+            d["id"] = str(d["id"])
+        if d.get("agent_config") is None:
+            d["agent_config"] = "unknown"
+        if d.get("determinism_rate") is None:
+            d["determinism_rate"] = 1.0
+        formatted.append(d)
+
+    parsed = [FailureLibraryEntry(**e) for e in formatted]
     return FailureLibraryResponse(entries=parsed, total=len(parsed))
 
 

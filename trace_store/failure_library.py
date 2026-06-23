@@ -194,7 +194,8 @@ class FailureLibraryStore:
         params = []
         
         if pattern_fragment is not None:
-            where_clauses.append("failure_pattern LIKE ?")
+            where_clauses.append("(failure_pattern LIKE ? OR fix_that_worked LIKE ?)")
+            params.append(f"%{pattern_fragment}%")
             params.append(f"%{pattern_fragment}%")
             
         if blame_step is not None:
