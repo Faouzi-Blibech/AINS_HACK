@@ -3,10 +3,24 @@
 
 const BASE = (import.meta.env.VITE_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
+async function _extractDetail(res, path) {
+  try {
+    const data = await res.clone().json();
+    if (data && data.detail) {
+      return typeof data.detail === "string"
+        ? data.detail
+        : JSON.stringify(data.detail);
+    }
+  } catch (_) {
+    // Body was not JSON -- fall through.
+  }
+  return `API ${path} returned ${res.status} ${res.statusText}`;
+}
+
 async function _get(path) {
   const res = await fetch(`${BASE}${path}`);
   if (!res.ok) {
-    throw new Error(`API ${path} returned ${res.status} ${res.statusText}`);
+    throw new Error(await _extractDetail(res, path));
   }
   return res.json();
 }
@@ -56,7 +70,7 @@ async function _post(path, body) {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    throw new Error(`API ${path} returned ${res.status} ${res.statusText}`);
+    throw new Error(await _extractDetail(res, path));
   }
   return res.json();
 }
@@ -74,4 +88,14 @@ export function postDiverge(runId, { step_id, target, value }) {
 /** POST /runs/{run_id}/counterfactual  ->  {available, variants?, winner?, confidence?, rationale?} */
 export function postCounterfactual(runId, { step_id, n }) {
   return _post(`/runs/${encodeURIComponent(runId)}/counterfactual`, { step_id, n });
+}
+
+/** POST /agents/run  ->  {run_id, status, steps} */
+export function postAgentRun(body) {
+  return _post("/agents/run", body);
+}
+
+/** GET /agents/connect-info  ->  ConnectInfo{http, mcp, sdk} */
+export function getConnectInfo() {
+  return _get("/agents/connect-info");
 }

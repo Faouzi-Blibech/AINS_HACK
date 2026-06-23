@@ -96,11 +96,13 @@ def sdk_identity(tool: str, args: dict, volatile: list[str]) -> str:
 
 
 def build_sdk_step(*, step_id, prev_step_id, tool, args, result, side_effecting,
-                   latency_ms, ts_ms, policy: Policy) -> dict:
+                   latency_ms, ts_ms, policy: Policy,
+                   parallel_group: str | None = None,
+                   causal_parents: list | None = None) -> dict:
     args = args or {}
     args_blob = store_blob(policy.redact_body(json.dumps(args, default=str)))
     result_blob = store_blob(policy.redact_body(json.dumps(result, default=str)))
-    return {
+    step = {
         "step_id": step_id,
         "type": "tool_call",
         "transport": "sdk",
@@ -110,9 +112,15 @@ def build_sdk_step(*, step_id, prev_step_id, tool, args, result, side_effecting,
         "status_code": 200,
         "side_effecting": side_effecting,
         "confidence": None,
-        "causal_parents": [prev_step_id] if prev_step_id else [],
+        "causal_parents": (causal_parents if causal_parents is not None
+                           else ([prev_step_id] if prev_step_id else [])),
         "tool": tool,
         "args_blob": args_blob,
         "result_blob": result_blob,
         "request_identity": sdk_identity(tool, args, policy.volatile_fields()),
     }
+    # parallel_group (schema v1.1): present only for tool_calls dispatched in a
+    # single multi-tool model response; omitted for sequential calls.
+    if parallel_group is not None:
+        step["parallel_group"] = parallel_group
+    return step

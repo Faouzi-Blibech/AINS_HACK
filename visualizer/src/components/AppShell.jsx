@@ -9,6 +9,7 @@ const ICONS = {
   trace: "M4 4l4 4-4 4M10 16h7",
   memory: "M10 2a5 5 0 00-3.5 8.5L3 14h14l-3.5-3.5A5 5 0 0010 2z",
   eval: "M4 12l4 4 8-8M17 3H3a1 1 0 00-1 1v12a1 1 0 001 1h14a1 1 0 001-1V4a1 1 0 00-1-1z",
+  connect: "M8.5 4.5a2.5 2.5 0 015 0v1a2.5 2.5 0 01-5 0v-1zM4 10h12M6 10v5.5a1.5 1.5 0 003 0V10M11 10v5.5a1.5 1.5 0 003 0V10",
 };
 
 const NAV_ITEMS = [
@@ -16,6 +17,7 @@ const NAV_ITEMS = [
   { label: "Trace", to: "/runs/latest", end: false, icon: "trace", count: 9, matchPrefix: "/runs/" },
   { label: "Failure memory", to: "/memory", end: false, icon: "memory", count: 14 },
   { label: "Evaluation", to: "/eval", end: true, icon: "eval" },
+  { label: "Connect agent", to: "/connect", end: true, icon: "connect" },
 ];
 
 function CassetteLogoMark() {
@@ -390,6 +392,9 @@ export default function AppShell() {
   } else if (location.pathname === "/eval") {
     pageTitle = "Evaluation";
     pageSub = "Metric scores vs targets";
+  } else if (location.pathname === "/connect") {
+    pageTitle = "Connect agent";
+    pageSub = "Quick test or bring your own agent";
   }
 
   return (
