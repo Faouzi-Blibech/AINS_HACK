@@ -141,6 +141,29 @@ class Replayer:
             if ident is not None:
                 self._index.setdefault(ident, deque()).append(step)
 
+        # --- parallel group index ---
+        # Maps parallel_group UUID → {tool_name → FIFO deque of steps}.
+        # Used for two purposes:
+        #   1. Sibling-aware fallback: when get_response_for_hash misses (e.g.
+        #      the hash drifted slightly) but the tool name matches an unserved
+        #      sibling in the same parallel batch, serve from tape instead of
+        #      synthesizing.
+        #   2. Fork-sibling detection: Divergence.fork() and the sequential
+        #      cursor use _fork_parallel_group to decide whether a step that
+        #      sits after fork_step_id is a sibling (serve from tape) or a
+        #      genuine downstream step (synthesize or go live).
+        self._parallel_group_index: dict[str, dict[str, deque]] = {}
+        for step in self.steps:
+            pg = step.get("parallel_group")
+            if pg:
+                tool = step.get("tool", "unknown")
+                (
+                    self._parallel_group_index
+                    .setdefault(pg, {})
+                    .setdefault(tool, deque())
+                    .append(step)
+                )
+
         # --- sequential cursor (fallback / tests) ---
         self._cursor = 0
 
@@ -148,8 +171,25 @@ class Replayer:
         self._is_record_over: bool = self.trace_doc.get("mode") == "record-over"
         self._fork_step_id: int | None = self.trace_doc.get("fork_step_id")
 
+        # parallel_group of the fork step (if any) — steps sharing this group
+        # are siblings of the fork and must be served from tape, not synthesized.
+        self._fork_parallel_group: str | None = None
+        if self._fork_step_id is not None:
+            fork_step = next(
+                (s for s in self.steps if s["step_id"] == self._fork_step_id),
+                None,
+            )
+            if fork_step:
+                self._fork_parallel_group = fork_step.get("parallel_group")
+
         # Core safety counter — must remain 0 for the whole replay session.
         self.side_effect_count = 0
+
+        # Number of steps served from tape across ALL matching paths
+        # (hash, identity, sequential, and parallel-sibling fallback).
+        # Used by finish() to determine completion status independently of the
+        # sequential cursor so that hash-only replays report status="ok" correctly.
+        self._served_count: int = 0
 
         # Number of steps served by the mock synthesizer (tape miss path).
         self.synthesized_count = 0
@@ -161,7 +201,11 @@ class Replayer:
     # Primary API — hash matching (Derbal)
     # ------------------------------------------------------------------
 
-    def get_response_for_hash(self, request_blob_ref: str) -> dict[str, Any]:
+    def get_response_for_hash(
+        self,
+        request_blob_ref: str,
+        tool_hint: str | None = None,
+    ) -> dict[str, Any]:
         """Look up and return the recorded response for a given request hash.
 
         Called by Abdelhedi's proxy at replay time. The proxy hashes the
@@ -170,8 +214,8 @@ class Replayer:
         return the payload that was recorded for it.
 
         On a miss, behaviour depends on ``synthesize_on_miss``:
-          - True (default): delegates to the mock synthesizer and returns a
-            synthesized response envelope (``synthesized: True``).
+          - True (default): first tries a parallel-sibling lookup (if
+            ``tool_hint`` is given), then delegates to the mock synthesizer.
           - False: raises ReplayError (original behaviour).
 
         Parameters
@@ -180,6 +224,12 @@ class Replayer:
             The ``sha256:...`` ref computed from the live request's body/args.
             This must match either an ``args_blob`` (tool_call) or a
             ``prompt_blob`` (llm_call) stored in the trace.
+        tool_hint:
+            Optional tool name passed by the HTTP proxy. Used for parallel-
+            sibling resolution when the hash misses (e.g. the args hash drifted
+            slightly due to a timestamp difference) but the tool name is the
+            same. When None, sibling resolution is skipped and behaviour is
+            identical to before this parameter was added.
         """
         queue = self._hash_index.get(request_blob_ref)
         if not queue:
@@ -190,6 +240,19 @@ class Replayer:
                     f"No recorded step found for request hash {request_blob_ref!r}. "
                     "The agent may be making a call that was not recorded."
                 )
+            # Parallel-sibling fallback: before going to the synthesizer, check
+            # if a parallel group still has an unserved step with the same tool
+            # name. This recovers the correct recorded response even when the
+            # hash drifted (e.g. a non-deterministic timestamp in the args).
+            if tool_hint:
+                sibling = self._serve_parallel_sibling(tool_hint)
+                if sibling is not None:
+                    log.debug(
+                        "get_response_for_hash: hash miss for %r — served "
+                        "parallel sibling step %s (tool=%r) from group.",
+                        request_blob_ref, sibling["step_id"], tool_hint,
+                    )
+                    return self._build_response(sibling)
             # Best-effort: try to recover the original args from the blob store
             # so the synthesizer has richer context. The blob may not exist if
             # the call was truly novel (never stored by the recorder).
@@ -207,7 +270,7 @@ class Replayer:
                     "falling back to synthesizer with empty args.",
                     request_blob_ref, exc,
                 )
-            return self._synthesize_response(tool="unknown_tool", arguments=arguments)
+            return self._synthesize_response(tool=tool_hint or "unknown_tool", arguments=arguments)
         step = queue.popleft()
         return self._build_response(step)
 
@@ -283,6 +346,14 @@ class Replayer:
           - ``record-over`` fork + ``synthesize_on_miss=False``: raises
             ``TapeExhaustedForFork`` so the record-over proxy knows to switch
             the agent to live mode.
+
+        Parallel-aware record-over behaviour:
+          When in record-over mode and the cursor lands on a step whose
+          step_id > fork_step_id, the step is normally considered downstream
+          of the fork and synthesized / handed to live mode. However, if the
+          step shares a ``parallel_group`` with the fork step it is a
+          *sibling* — dispatched concurrently with the fork step, not causally
+          after it — and is served from tape unchanged.
         """
         if self._cursor >= len(self.steps):
             if self._is_record_over:
@@ -302,6 +373,27 @@ class Replayer:
                 f"at step index {self._cursor}"
             )
 
+        # In record-over mode: if this step is past the fork point AND it is
+        # NOT a parallel sibling of the fork step, treat it as downstream.
+        if (
+            self._is_record_over
+            and self._fork_step_id is not None
+            and step["step_id"] > self._fork_step_id
+        ):
+            step_pg = step.get("parallel_group")
+            is_sibling = (
+                step_pg is not None
+                and step_pg == self._fork_parallel_group
+            )
+            if not is_sibling:
+                # Genuinely downstream of the fork: synthesize or go live.
+                if self.synthesize_on_miss:
+                    return self._synthesize_response(
+                        tool=step.get("tool", "unknown_tool"), arguments={}
+                    )
+                raise TapeExhaustedForFork(self.run_id, self._fork_step_id)
+            # Fall through: sibling → serve from tape normally.
+
         return self._build_response(step)
 
     # ------------------------------------------------------------------
@@ -309,16 +401,26 @@ class Replayer:
     # ------------------------------------------------------------------
 
     def finish(self) -> ReplayResult:
-        """Complete the replay session and return the summary."""
-        if self._is_record_over and self._cursor >= len(self.steps):
-            status = "fork-live"  # expected: agent went past the tape end
-        elif self._cursor == len(self.steps):
+        """Complete the replay session and return the summary.
+
+        Status is determined by comparing ``_served_count`` (incremented by
+        every tape-serving code path, not just the sequential cursor) against
+        the total number of steps in the tape. This means hash-only and
+        identity-only replays report ``"ok"`` correctly, not ``"incomplete"``.
+        """
+        total = len(self.steps)
+        if self._is_record_over:
+            # In a record-over fork the tape is intentionally shorter than the
+            # original run (only steps up to and including the fork point plus
+            # any parallel siblings). Any _served_count >= total is success.
+            status = "fork-live" if self._served_count >= total else "incomplete"
+        elif self._served_count == total:
             status = "ok"
         else:
             status = "incomplete"  # agent stopped before consuming all tape
         return ReplayResult(
             run_id=self.run_id,
-            steps_replayed=self._cursor,
+            steps_replayed=self._served_count,
             side_effect_count=self.side_effect_count,
             status=status,
             synthesized_count=self.synthesized_count,
@@ -345,6 +447,23 @@ class Replayer:
             return {}
         return json.loads(fetch_blob(blob_ref))
 
+    def _serve_parallel_sibling(self, tool_name: str) -> dict | None:
+        """Return and pop an unserved sibling step for tool_name.
+
+        Scans all parallel groups in the index for any group that still has
+        an unserved step for the requested tool name. Returns the step dict
+        so the caller can pass it to ``_build_response``, or None if no
+        matching sibling is found.
+
+        This is called only on a hash-index miss with a non-None tool_hint,
+        so it does NOT consume hash-index entries.
+        """
+        for group in self._parallel_group_index.values():
+            queue = group.get(tool_name)
+            if queue:
+                return queue.popleft()
+        return None
+
     def _build_response(self, step: dict[str, Any]) -> dict[str, Any]:
         """Apply the safety invariant and return the response envelope.
 
@@ -353,7 +472,11 @@ class Replayer:
         a type check.  Error steps in ``faithful`` mode still carry the
         recorded payload (coerced to dict if needed) and set
         ``is_error_step=True``.
+
+        Increments ``_served_count`` so ``finish()`` can determine completion
+        status independently of the sequential cursor.
         """
+        self._served_count += 1
         # Core safety invariant:
         # If this step is side-effecting the real-world action is NEVER taken.
         # We do NOT increment side_effect_count because no side effect fires.
