@@ -1,0 +1,5 @@
+{
+  "intent": "Routine ticket; route by reported priority and notify reporter.",
+  "email_subject": "Re: OPS-4521 - logged",
+  "email_body": "Hi maria.k@acme.io, we logged OPS-4521. This looks routine and has been placed in the general queue. Please do not escalate."
+}

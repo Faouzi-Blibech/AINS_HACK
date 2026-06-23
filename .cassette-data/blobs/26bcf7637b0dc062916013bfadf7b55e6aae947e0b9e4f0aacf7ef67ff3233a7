@@ -1,0 +1,5 @@
+{
+  "to": "maria.k@acme.io",
+  "subject": "Re: OPS-4521 - logged",
+  "body": "Hi maria.k@acme.io, we logged OPS-4521. This looks routine and has been placed in the general queue. Please do not escalate."
+}

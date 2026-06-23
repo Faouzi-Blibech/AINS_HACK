@@ -131,3 +131,51 @@ def seed_store(store: Any) -> None:
     for run in _EXTRA_RUNS:
         if run["run_id"] not in existing_ids:
             _insert_run(store, run)
+
+
+def seed_failure_library(failure_store: Any) -> None:
+    """Seed failure_store with initial failure library entries if empty.
+
+    Idempotent: skips seeding if the store already contains any entry.
+    """
+    from api.failure_memory import FAILURE_MEMORY
+
+    existing = failure_store.get_all(limit=1)
+    if not existing:
+        for entry in FAILURE_MEMORY:
+            failure_store.write_entry(
+                failure_pattern=entry["failure_pattern"],
+                blame_step=entry["blame_step"],
+                fix_that_worked=entry["fix_that_worked"],
+                agent_config=entry.get("agent_config"),
+                determinism_rate=entry.get("determinism_rate"),
+            )
+
+
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+    # Add repo root to sys.path so trace_store can be resolved
+    _ROOT = str(Path(__file__).resolve().parent.parent)
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+
+    from trace_store import TraceStore, FailureLibraryStore
+
+    db_path = os.environ.get(
+        "CASSETTE_DB_PATH",
+        str(Path(__file__).resolve().parent / "cassette.sqlite3"),
+    )
+    print(f"Seeding database at: {db_path}")
+
+    # Seed traces
+    t_store = TraceStore(db_path)
+    seed_store(t_store)
+    t_store.close()
+
+    # Seed failure library
+    f_store = FailureLibraryStore(db_path)
+    seed_failure_library(f_store)
+    f_store.close()
+
+    print("Database seeding completed successfully.")

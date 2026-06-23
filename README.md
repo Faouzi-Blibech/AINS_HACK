@@ -15,6 +15,30 @@ To record new traces, add a `GROQ_API_KEY` to `.env` (see `.env.example`).
 
 ---
 
+## Integrate your own agent
+
+Cassette records your own agent without any code change.
+
+**Local agent (one command):**
+
+    cassette run -- python your_agent.py     # first run asks once to trust + record
+
+The run appears in the UI at http://localhost:5173. To auto-record every future
+session, run `cassette enable -- python your_agent.py` once and add
+`~/.cassette/bin` to your PATH.
+
+**Agent on a server / separate terminal:**
+
+    cassette serve            # starts the recorder, prints the env block
+    cassette trust            # one-time: trust the CA for httpx-based agents
+
+Paste the printed env block into the agent's shell and run it normally.
+
+Recordings live in `~/.cassette/` (set `CASSETTE_HOME` to relocate). Export
+`CASSETTE_HOME` before `docker compose up` so the UI reads that store.
+
+---
+
 ## 1. The problem
 
 When traditional software fails, you read the stack trace, reproduce the bug, and patch it. When an **AI agent** fails in production (it routes a ticket to the wrong team, calls a tool with a malformed argument, or quietly drafts an email it was never meant to send) almost none of that holds:

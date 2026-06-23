@@ -96,9 +96,12 @@ class TestHashMatching:
         assert replayer.side_effect_count == 0
 
     def test_unknown_hash_raises(self, populated_store, fixture_trace):
-        replayer = Replayer(populated_store, fixture_trace["run_id"])
+        # synthesize_on_miss=False: a miss must raise ReplayError.
+        # (With the default True a miss would call the mock synthesizer instead.)
+        replayer = Replayer(populated_store, fixture_trace["run_id"], synthesize_on_miss=False)
         with pytest.raises(ReplayError, match="No recorded step found"):
             replayer.get_response_for_hash("sha256:" + "dead" * 16)
+
 
     def test_order_independent(self, populated_store, fixture_trace):
         replayer = Replayer(populated_store, fixture_trace["run_id"])
@@ -106,6 +109,79 @@ class TestHashMatching:
             key = step.get("args_blob") or step.get("prompt_blob")
             resp = replayer.get_response_for_hash(key)
             assert resp["step_id"] == step["step_id"]
+
+    # ------------------------------------------------------------------
+    # EC-3 regression: duplicate blob refs served in recorded order
+    # ------------------------------------------------------------------
+
+    def test_duplicate_hash_served_in_order(self, tmp_path, monkeypatch):
+        """Two tool_call steps sharing the same args_blob are served FIFO.
+
+        Before the EC-3 fix _hash_index[key] = step overwrote the first step;
+        both replay calls returned step 2's response. After the fix step 1 is
+        returned first and step 2 is returned second.
+        """
+        blob_dir = tmp_path / "blobs"
+        blob_dir.mkdir()
+        monkeypatch.setenv("CASSETTE_BLOB_DIR", str(blob_dir))
+
+        shared_args_ref = store_blob(json.dumps({"ticket_id": "JIRA-42"}))
+        result_ref_1 = store_blob(json.dumps({"priority": "high"}))
+        result_ref_2 = store_blob(json.dumps({"priority": "critical"}))
+
+        db = tmp_path / "dup.sqlite3"
+        ts = TraceStore(db_path=str(db))
+        ts.start_run("dup-run", agent="test", mode="record")
+        ts.append_step("dup-run", {
+            "step_id": 1, "type": "tool_call", "timestamp_ms": 1000,
+            "args_blob": shared_args_ref, "result_blob": result_ref_1,
+            "side_effecting": False,
+        })
+        ts.append_step("dup-run", {
+            "step_id": 2, "type": "tool_call", "timestamp_ms": 2000,
+            "args_blob": shared_args_ref, "result_blob": result_ref_2,
+            "side_effecting": False,
+        })
+
+        replayer = Replayer(ts, "dup-run")
+
+        resp1 = replayer.get_response_for_hash(shared_args_ref)
+        resp2 = replayer.get_response_for_hash(shared_args_ref)
+
+        assert resp1["step_id"] == 1, "first duplicate call must return step 1"
+        assert resp2["step_id"] == 2, "second duplicate call must return step 2"
+        ts.close()
+
+    def test_duplicate_hash_exhausted_deque_raises(self, tmp_path, monkeypatch):
+        """A (N+1)-th call on an N-step duplicate deque is treated as a miss.
+
+        With synthesize_on_miss=False this means ReplayError is raised, not
+        a silent wrong response.
+        """
+        blob_dir = tmp_path / "blobs"
+        blob_dir.mkdir()
+        monkeypatch.setenv("CASSETTE_BLOB_DIR", str(blob_dir))
+
+        shared_args_ref = store_blob(json.dumps({"ticket_id": "JIRA-42"}))
+        result_ref = store_blob(json.dumps({"priority": "high"}))
+
+        db = tmp_path / "exhaust.sqlite3"
+        ts = TraceStore(db_path=str(db))
+        ts.start_run("exhaust-run", agent="test", mode="record")
+        for sid in (1, 2):
+            ts.append_step("exhaust-run", {
+                "step_id": sid, "type": "tool_call", "timestamp_ms": sid * 1000,
+                "args_blob": shared_args_ref, "result_blob": result_ref,
+                "side_effecting": False,
+            })
+
+        replayer = Replayer(ts, "exhaust-run", synthesize_on_miss=False)
+        replayer.get_response_for_hash(shared_args_ref)  # step 1
+        replayer.get_response_for_hash(shared_args_ref)  # step 2
+        with pytest.raises(ReplayError, match="No recorded step found"):
+            replayer.get_response_for_hash(shared_args_ref)  # 3rd call — miss
+        ts.close()
+
 
 
 class TestSequentialMatching:

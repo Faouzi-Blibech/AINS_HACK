@@ -7,7 +7,10 @@ services:
       - "8000:8000"
     environment:
       GROQ_API_KEY: ${GROQ_API_KEY:-}
-      CASSETTE_DB_PATH: /app/api/cassette.sqlite3
+      CASSETTE_DB_PATH: /data/cassette.sqlite3
+      CASSETTE_BLOB_DIR: /data/blobs
+    volumes:
+      - "${CASSETTE_HOME:-./.cassette-data}:/data"
 
   ui:
     build:
