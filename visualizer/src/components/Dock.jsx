@@ -3,7 +3,8 @@
 // Uses inline styles + var(--*) tokens only. No Tailwind classes.
 
 import { useState } from "react";
-import { postInject, postDiverge, postCounterfactual } from "../api/client.js";
+import { getTrace, postInject, postDiverge, postCounterfactual } from "../api/client.js";
+import DivergenceDiff from "../DivergenceDiff.jsx";
 
 // ---- Tab bar ----
 
@@ -75,7 +76,7 @@ function Spinner() {
 const FAIL_STATES = ["error", "failed", "timeout", "aborted"];
 const OK_STATES = ["ok", "passed"];
 
-function DebugAgentTab({ runId, selectedStepId, steps, originalStatus }) {
+function LegacyDebugAgentTab({ runId, selectedStepId, steps, originalStatus }) {
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -89,7 +90,7 @@ function DebugAgentTab({ runId, selectedStepId, steps, originalStatus }) {
     selectedStepId ??
     (steps?.[0]?.step_id ?? "N");
 
-  const handleFire = async () => {
+  const handleLegacyFire = async () => {
     if (!text.trim()) return;
     setLoading(true);
     setError(null);
@@ -195,7 +196,7 @@ function DebugAgentTab({ runId, selectedStepId, steps, originalStatus }) {
           }}
         >
           <button
-            onClick={handleFire}
+            onClick={handleLegacyFire}
             disabled={loading || !text.trim()}
             style={{
               background: loading || !text.trim() ? "var(--bg3)" : "var(--accent)",
@@ -398,6 +399,549 @@ function DebugAgentTab({ runId, selectedStepId, steps, originalStatus }) {
             : "// Injection will appear here after firing replay."}
         </pre>
       </div>
+    </div>
+  );
+}
+
+function DebugAgentTab({ runId, selectedStepId, steps, originalStatus }) {
+  const [text, setText] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [injectResult, setInjectResult] = useState(null);
+  const [draftInjection, setDraftInjection] = useState(null);
+  const [divergeResult, setDivergeResult] = useState(null);
+  const [forkTrace, setForkTrace] = useState(null);
+  const [divergeLoading, setDivergeLoading] = useState(false);
+
+  const stepOptions = steps ?? [];
+  const hasDraftStepOption =
+    draftInjection &&
+    stepOptions.some((step) => String(step.step_id) === String(draftInjection.step_id));
+
+  const normalizedDraftInjection = draftInjection
+    ? {
+        step_id: draftInjection.step_id === "" ? "" : Number(draftInjection.step_id),
+        target: draftInjection.target,
+        value: draftInjection.value,
+      }
+    : null;
+
+  const injectionJson = normalizedDraftInjection
+    ? JSON.stringify(normalizedDraftInjection, null, 2)
+    : null;
+
+  const canRunFork = Boolean(
+    draftInjection &&
+      !divergeLoading &&
+      draftInjection.step_id !== "" &&
+      draftInjection.target &&
+      draftInjection.value !== ""
+  );
+
+  const stepOptionLabel = (step) => {
+    const kind =
+      step.type === "llm_call"
+        ? `LLM ${step.model ?? "model"}`
+        : step.type === "tool_call"
+        ? `Tool ${step.tool ?? "tool"}`
+        : step.type ?? "step";
+    return `Step ${step.step_id} - ${kind}`;
+  };
+
+  const updateDraft = (field, value) => {
+    setDraftInjection((prev) => (prev ? { ...prev, [field]: value } : prev));
+    setDivergeResult(null);
+    setForkTrace(null);
+  };
+
+  const handleGenerateInjection = async () => {
+    if (!text.trim()) return;
+    setLoading(true);
+    setError(null);
+    setInjectResult(null);
+    setDraftInjection(null);
+    setDivergeResult(null);
+    setForkTrace(null);
+
+    try {
+      const result = await postInject(runId, text.trim());
+      setInjectResult(result);
+
+      if (result.available && result.injection) {
+        const inj = result.injection;
+        setDraftInjection({
+          step_id: String(inj.step_id ?? selectedStepId ?? stepOptions?.[0]?.step_id ?? ""),
+          target: inj.target ?? "result",
+          value: inj.value ?? "",
+        });
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRunFork = async () => {
+    if (!canRunFork) return;
+    setDivergeLoading(true);
+    setError(null);
+    setDivergeResult(null);
+    setForkTrace(null);
+
+    try {
+      const dr = await postDiverge(runId, {
+        step_id: Number(draftInjection.step_id),
+        target: draftInjection.target,
+        value: draftInjection.value,
+      });
+      const fork = await getTrace(dr.fork_run_id);
+      setDivergeResult(dr);
+      setForkTrace(fork);
+    } catch (err) {
+      setDivergeResult({ _error: err.message });
+    } finally {
+      setDivergeLoading(false);
+    }
+  };
+
+  const notAvailableMsg =
+    injectResult && !injectResult.available
+      ? injectResult.detail ?? "Injection not available (no key configured)."
+      : null;
+
+  const verdict = (() => {
+    if (!divergeResult || divergeResult._error) return null;
+    const fs = divergeResult.final_status;
+    const origFailed = FAIL_STATES.includes(originalStatus);
+    const forkOk = OK_STATES.includes(fs);
+    if (origFailed && forkOk) {
+      return { tone: "good", text: `Fix resolves the failure: run now passes (was ${originalStatus} -> ${fs}).` };
+    }
+    if (origFailed && !forkOk) {
+      return { tone: "bad", text: `Fix does not resolve the failure: still ${fs} (was ${originalStatus}).` };
+    }
+    if (!origFailed && forkOk) {
+      return { tone: "neutral", text: `Original run already passed; the fork also passes (${fs}).` };
+    }
+    return { tone: "bad", text: `This edit breaks a previously passing run (now ${fs}).` };
+  })();
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, minHeight: "100%" }}>
+      <div style={{ display: "flex", gap: 22, minHeight: 262 }}>
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <div style={{ font: "600 12.5px var(--ui)", color: "var(--fg0)" }}>
+            Describe the fix in plain English
+          </div>
+          <div
+            style={{
+              font: "450 11px var(--ui)",
+              color: "var(--fg1)",
+              marginTop: 3,
+              marginBottom: 11,
+            }}
+          >
+            Cassette compiles your intent into a structured injection for review.
+          </div>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="e.g. at step 2, priority should have been high, not medium"
+            style={{
+              flex: 1,
+              minHeight: 156,
+              resize: "none",
+              background: "var(--bg2)",
+              border: "1px solid var(--bd)",
+              borderRadius: 10,
+              padding: "13px 14px",
+              font: "450 13px var(--ui)",
+              color: "var(--fg0)",
+              outline: "none",
+              lineHeight: 1.5,
+            }}
+          />
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              marginTop: 12,
+            }}
+          >
+            <button
+              onClick={handleGenerateInjection}
+              disabled={loading || !text.trim()}
+              style={{
+                background: loading || !text.trim() ? "var(--bg3)" : "var(--accent)",
+                color: loading || !text.trim() ? "var(--fg2)" : "#fff",
+                border: "none",
+                borderRadius: 9,
+                padding: "10px 16px",
+                font: "600 12.5px var(--ui)",
+                cursor: loading || !text.trim() ? "default" : "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                transition: "background 0.12s",
+              }}
+            >
+              {loading ? (
+                <Spinner />
+              ) : (
+                <svg width="13" height="13" viewBox="0 0 16 16">
+                  <path
+                    d="M8 1.8l1.3 3.1 3.4.3-2.6 2.2.8 3.3L8 8.9l-2.9 1.8.8-3.3-2.6-2.2 3.4-.3z"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.4"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              )}
+              Generate injection
+            </button>
+            <div style={{ font: "450 10.5px var(--mono)", color: "var(--fg2)" }}>
+              deterministic / 0 live calls
+            </div>
+          </div>
+          {error && (
+            <div style={{ marginTop: 8, font: "450 11px var(--ui)", color: "var(--fail)" }}>
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: 9,
+            }}
+          >
+            <span
+              style={{
+                font: "600 9.5px var(--mono)",
+                letterSpacing: ".1em",
+                color: "var(--fg2)",
+              }}
+            >
+              GENERATED INJECTION
+            </span>
+            {injectionJson && (
+              <span
+                style={{
+                  font: "600 9px var(--mono)",
+                  color: "var(--pass)",
+                  background: "var(--pass-dim)",
+                  border: "1px solid var(--pass)",
+                  borderRadius: 5,
+                  padding: "1px 6px",
+                }}
+              >
+                SCHEMA VALID
+              </span>
+            )}
+          </div>
+
+          {draftInjection ? (
+            <>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(120px, .85fr) minmax(120px, .65fr)",
+                  gap: 10,
+                  marginBottom: 10,
+                }}
+              >
+                <label style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                  <span style={{ font: "600 10px var(--mono)", color: "var(--fg2)" }}>
+                    STEP
+                  </span>
+                  <select
+                    value={draftInjection.step_id}
+                    onChange={(e) => updateDraft("step_id", e.target.value)}
+                    style={{
+                      background: "var(--bg2)",
+                      border: "1px solid var(--bd)",
+                      borderRadius: 9,
+                      color: "var(--fg0)",
+                      font: "450 12px var(--ui)",
+                      padding: "9px 10px",
+                      outline: "none",
+                    }}
+                  >
+                    <option value="">Select step</option>
+                    {stepOptions.map((step) => (
+                      <option key={step.step_id} value={String(step.step_id)}>
+                        {stepOptionLabel(step)}
+                      </option>
+                    ))}
+                    {draftInjection.step_id && !hasDraftStepOption && (
+                      <option value={draftInjection.step_id}>
+                        Step {draftInjection.step_id}
+                      </option>
+                    )}
+                  </select>
+                </label>
+
+                <label style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                  <span style={{ font: "600 10px var(--mono)", color: "var(--fg2)" }}>
+                    TARGET
+                  </span>
+                  <select
+                    value={draftInjection.target}
+                    onChange={(e) => updateDraft("target", e.target.value)}
+                    style={{
+                      background: "var(--bg2)",
+                      border: "1px solid var(--bd)",
+                      borderRadius: 9,
+                      color: "var(--fg0)",
+                      font: "450 12px var(--ui)",
+                      padding: "9px 10px",
+                      outline: "none",
+                    }}
+                  >
+                    {["prompt", "response", "args", "result"].map((target) => (
+                      <option key={target} value={target}>
+                        {target}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <label style={{ display: "flex", flexDirection: "column", gap: 5, flex: 1 }}>
+                <span style={{ font: "600 10px var(--mono)", color: "var(--fg2)" }}>
+                  VALUE
+                </span>
+                <textarea
+                  value={draftInjection.value}
+                  onChange={(e) => updateDraft("value", e.target.value)}
+                  style={{
+                    flex: 1,
+                    minHeight: 88,
+                    resize: "vertical",
+                    background: "var(--bg2)",
+                    border: "1px solid var(--bd)",
+                    borderRadius: 10,
+                    padding: "11px 12px",
+                    font: "450 12px var(--mono)",
+                    color: "var(--fg0)",
+                    outline: "none",
+                    lineHeight: 1.55,
+                  }}
+                />
+              </label>
+
+              <pre
+                style={{
+                  margin: "10px 0 0",
+                  maxHeight: 112,
+                  background: "var(--bg2)",
+                  border: "1px solid var(--bd)",
+                  borderRadius: 10,
+                  padding: "11px 12px",
+                  overflow: "auto",
+                  whiteSpace: "pre",
+                  font: "450 11px var(--mono)",
+                  lineHeight: 1.55,
+                  color: "var(--fg1)",
+                }}
+              >
+                {injectionJson}
+              </pre>
+
+              {injectResult?.rationale && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    font: "450 11px var(--ui)",
+                    color: "var(--fg1)",
+                    lineHeight: 1.45,
+                  }}
+                >
+                  {injectResult.rationale}
+                </div>
+              )}
+
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  marginTop: 12,
+                  flexWrap: "wrap",
+                }}
+              >
+                <button
+                  onClick={handleRunFork}
+                  disabled={!canRunFork}
+                  style={{
+                    background: canRunFork ? "var(--accent)" : "var(--bg3)",
+                    color: canRunFork ? "#fff" : "var(--fg2)",
+                    border: "none",
+                    borderRadius: 9,
+                    padding: "10px 16px",
+                    font: "600 12.5px var(--ui)",
+                    cursor: canRunFork ? "pointer" : "default",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    transition: "background 0.12s",
+                  }}
+                >
+                  {divergeLoading ? (
+                    <Spinner />
+                  ) : (
+                    <svg width="13" height="13" viewBox="0 0 16 16">
+                      <path
+                        d="M5 3v6a3 3 0 003 3h3M11 9l3 3-3 3"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
+                  Run new forked run
+                </button>
+                <span style={{ font: "450 10.5px var(--mono)", color: "var(--fg2)" }}>
+                  fork @ step {draftInjection.step_id || "?"}
+                </span>
+              </div>
+            </>
+          ) : (
+            <pre
+              style={{
+                flex: 1,
+                margin: 0,
+                background: "var(--bg2)",
+                border: "1px solid var(--bd)",
+                borderRadius: 10,
+                padding: "13px 14px",
+                overflow: "auto",
+                whiteSpace: "pre-wrap",
+                font: "450 12px var(--mono)",
+                lineHeight: 1.65,
+                color: notAvailableMsg ? "var(--warn)" : "var(--fg2)",
+              }}
+            >
+              {notAvailableMsg ?? "// Injection fields will appear here after generation."}
+            </pre>
+          )}
+        </div>
+      </div>
+
+      {divergeLoading && (
+        <div
+          style={{
+            font: "450 11px var(--ui)",
+            color: "var(--fg2)",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <Spinner />
+          Forking replay...
+        </div>
+      )}
+      {verdict && (
+        <div
+          style={{
+            padding: "11px 14px",
+            borderRadius: 10,
+            border: `1px solid ${
+              verdict.tone === "good"
+                ? "var(--pass)"
+                : verdict.tone === "bad"
+                ? "var(--fail)"
+                : "var(--bd2)"
+            }`,
+            background:
+              verdict.tone === "good"
+                ? "var(--pass-dim)"
+                : verdict.tone === "bad"
+                ? "var(--fail-dim)"
+                : "var(--bg2)",
+            color:
+              verdict.tone === "good"
+                ? "var(--pass)"
+                : verdict.tone === "bad"
+                ? "var(--fail)"
+                : "var(--fg1)",
+            font: "600 12px var(--ui)",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <span style={{ fontSize: 14, flex: "none" }}>
+            {verdict.tone === "good" ? "OK" : verdict.tone === "bad" ? "!" : "i"}
+          </span>
+          <span>{verdict.text}</span>
+        </div>
+      )}
+      {divergeResult && !divergeResult._error && (
+        <div
+          style={{
+            font: "450 11px var(--ui)",
+            color: "var(--fg1)",
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap",
+          }}
+        >
+          <span>
+            Fork run:{" "}
+            <span style={{ fontFamily: "var(--mono)", fontSize: 10.5 }}>
+              {divergeResult.fork_run_id}
+            </span>
+          </span>
+          <span>
+            Status:{" "}
+            <span
+              style={{
+                fontFamily: "var(--mono)",
+                fontSize: 10.5,
+                color: OK_STATES.includes(divergeResult.final_status)
+                  ? "var(--pass)"
+                  : FAIL_STATES.includes(divergeResult.final_status)
+                  ? "var(--fail)"
+                  : "var(--fg1)",
+              }}
+            >
+              {divergeResult.final_status ?? "unknown"}
+            </span>
+          </span>
+          <span>
+            Side effects:{" "}
+            <span style={{ fontFamily: "var(--mono)", fontSize: 10.5 }}>
+              {divergeResult.side_effect_count ?? 0}
+            </span>
+          </span>
+        </div>
+      )}
+      {divergeResult?._error && (
+        <div style={{ font: "450 11px var(--ui)", color: "var(--fail)" }}>
+          Fork error: {divergeResult._error}
+        </div>
+      )}
+      {divergeResult && forkTrace && (
+        <DivergenceDiff
+          originalTrace={{ run_id: runId, steps }}
+          forkTrace={forkTrace}
+          forkStepId={divergeResult.diff?.fork_step_id}
+          editedFields={divergeResult.diff?.edited_fields ?? []}
+          finalStatus={divergeResult.final_status}
+          sideEffectCount={divergeResult.side_effect_count}
+        />
+      )}
     </div>
   );
 }
@@ -694,7 +1238,7 @@ function CounterfactualsTab({ runId, selectedStepId, blame }) {
 
 // ---- Divergence tab ----
 
-function DivergenceTab({ runId, selectedStepId, trace, steps }) {
+function LegacyDivergenceTab({ runId, selectedStepId, trace, steps }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
@@ -703,7 +1247,7 @@ function DivergenceTab({ runId, selectedStepId, trace, steps }) {
   // Determine step to fork at and pick target type
   const forkStepId = selectedStepId ?? steps?.[0]?.step_id ?? null;
   const selectedStep = steps?.find((s) => s.step_id === forkStepId);
-  const target = selectedStep?.step_type === "tool_call" ? "result" : "response";
+  const target = selectedStep?.type === "tool_call" ? "result" : "response";
 
   const handleFork = async () => {
     if (forkStepId == null) return;
@@ -952,7 +1496,7 @@ function DivergenceTab({ runId, selectedStepId, trace, steps }) {
                     <>
                       <span style={{ fontWeight: 600 }}>
                         {typeof row.orig === "object"
-                          ? (row.orig.step_type ?? row.orig.tool ?? "step")
+                          ? (row.orig.type ?? row.orig.tool ?? "step")
                           : String(row.orig)}
                       </span>
                       {typeof row.orig === "object" && row.orig.tool_name && (
@@ -989,7 +1533,7 @@ function DivergenceTab({ runId, selectedStepId, trace, steps }) {
                     <>
                       <span style={{ fontWeight: 600 }}>
                         {typeof row.fork === "object"
-                          ? (row.fork.step_type ?? row.fork.tool ?? "step")
+                          ? (row.fork.type ?? row.fork.tool ?? "step")
                           : String(row.fork)}
                       </span>
                       {typeof row.fork === "object" && row.fork.tool_name && (
@@ -1052,6 +1596,170 @@ function DivergenceTab({ runId, selectedStepId, trace, steps }) {
             side effects: {result.side_effect_count ?? 0}
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+function DivergenceTab({ runId, selectedStepId, trace, steps }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [result, setResult] = useState(null);
+  const [forkTrace, setForkTrace] = useState(null);
+  const [whatIf, setWhatIf] = useState("high");
+
+  const forkStepId = selectedStepId ?? steps?.[0]?.step_id ?? null;
+  const selectedStep = steps?.find((step) => step.step_id === forkStepId);
+  const target = selectedStep?.type === "tool_call" ? "result" : "response";
+
+  const handleFork = async () => {
+    if (forkStepId == null) return;
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    setForkTrace(null);
+
+    try {
+      const data = await postDiverge(runId, {
+        step_id: forkStepId,
+        target,
+        value: whatIf,
+      });
+      const fork = await getTrace(data.fork_run_id);
+      setResult(data);
+      setForkTrace(fork);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const editedFields = result?.diff?.edited_fields ?? [];
+  const forkStepLabel = result?.diff?.fork_step_id ?? forkStepId ?? "?";
+  const editedLabel = editedFields.length > 0 ? editedFields.join(", ") : target;
+
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          marginBottom: 12,
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ font: "600 12.5px var(--ui)", color: "var(--fg0)" }}>
+          Manual what-if
+        </div>
+        <span style={{ font: "450 11px var(--mono)", color: "var(--fg2)" }}>
+          original {runId}
+        </span>
+        <span style={{ font: "450 11px var(--mono)", color: "var(--accent)" }}>
+          {result
+            ? `fork @ step ${forkStepLabel} / ${editedLabel}`
+            : `fork @ step ${forkStepId ?? "?"} / ${target}`}
+        </span>
+
+        {!result && (
+          <input
+            value={whatIf}
+            onChange={(e) => setWhatIf(e.target.value)}
+            placeholder="what-if value"
+            title="The alternative value to inject at this step"
+            style={{
+              marginLeft: "auto",
+              width: 170,
+              background: "var(--bg2)",
+              border: "1px solid var(--bd)",
+              borderRadius: 9,
+              padding: "8px 11px",
+              font: "450 12px var(--mono)",
+              color: "var(--fg0)",
+              outline: "none",
+            }}
+          />
+        )}
+        {!result && (
+          <button
+            onClick={handleFork}
+            disabled={loading || forkStepId == null}
+            style={{
+              marginLeft: 8,
+              background:
+                loading || forkStepId == null ? "var(--bg3)" : "var(--accent)",
+              color: loading || forkStepId == null ? "var(--fg2)" : "#fff",
+              border: "none",
+              borderRadius: 9,
+              padding: "8px 14px",
+              font: "600 12px var(--ui)",
+              cursor: loading || forkStepId == null ? "default" : "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              transition: "background 0.12s",
+            }}
+          >
+            {loading ? <Spinner /> : null}
+            Fork at step {forkStepId ?? "?"}
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <div
+          style={{
+            padding: "10px 14px",
+            background: "var(--fail-dim)",
+            border: "1px solid var(--fail)",
+            borderRadius: 10,
+            font: "450 12px var(--ui)",
+            color: "var(--fail)",
+            marginBottom: 12,
+          }}
+        >
+          {error}
+        </div>
+      )}
+
+      {!result && !loading && !error && (
+        <div
+          style={{
+            font: "450 12px var(--ui)",
+            color: "var(--fg2)",
+            padding: "20px 0",
+          }}
+        >
+          Click "Fork at step {forkStepId ?? "?"}" to generate the trajectory diff.
+        </div>
+      )}
+
+      {loading && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            font: "450 12px var(--ui)",
+            color: "var(--fg2)",
+            padding: "20px 0",
+          }}
+        >
+          <Spinner />
+          Forking trajectory...
+        </div>
+      )}
+
+      {result && forkTrace && (
+        <DivergenceDiff
+          originalTrace={trace}
+          forkTrace={forkTrace}
+          forkStepId={result.diff?.fork_step_id}
+          editedFields={editedFields}
+          finalStatus={result.final_status}
+          sideEffectCount={result.side_effect_count}
+        />
       )}
     </div>
   );
