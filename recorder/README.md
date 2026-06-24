@@ -100,3 +100,27 @@ Cassette imports — a test asserts this. Hermetic 3-transport demo:
 Replay shuts the upstream first and reports `live_executed: 0`, `divergences: 0`,
 `served == recorded_steps` — side-effecting MCP and SDK tools are served from tape but never
 executed.
+
+## Import an external agent (containerized)
+
+`import_agent/driver.py` records an agent that lives in another repo, with no code change and no
+manual proxy setup. It generalizes `record_session.record_run` and is the **entrypoint of the
+runner container** (`docker/agent-runner.Dockerfile`). Inside the container it starts the
+mitmproxy `Recorder`, installs the imported agent's own declared dependencies (best-effort, via
+`requirements.txt` or `pyproject.toml`), puts the workspace on `sys.path`, instruments declared
+SDK tools, then runs the agent either in-process by `"module:function"` (full HTTP + MCP + SDK)
+or as a subprocess (HTTP + MCP only), writing one trace to the mounted store.
+
+The host side is API-driven (`POST /agents/import`, not a CLI), via the `import_agent` subpackage:
+
+- `import_agent/source.py` resolves a git URL or local path into a workspace and pins the commit.
+- `import_agent/image.py` builds and caches the runner image (recorder-side packages only, no
+  `cassette/`).
+- `import_agent/container.py` builds the `docker run` invocation (workspace + store mounts; secret
+  env passed by name via `-e KEY` so values never appear on the command line).
+- `agent_shim/sitecustomize.py` is a PYTHONPATH startup shim that trusts the in-container CA and
+  wraps the tools named in `CASSETTE_TOOL_MANIFEST` (the cross-process equivalent of
+  `_instrument_sdk`, for the subprocess path).
+
+Capture tiers: HTTP and MCP for any language; full SDK capture for Python agents that declare
+their tools. Non-Python in-process tools and AOT runtimes (Go, Rust) are HTTP/MCP only.

@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { postAgentRun, getConnectInfo } from "../api/client.js";
+import { postAgentRun, postAgentImport } from "../api/client.js";
 
 // Provider presets matching the backend _PROVIDER_PRESETS
 const PRESETS = {
@@ -87,65 +87,6 @@ function TextInput({ id, value, onChange, placeholder, type, readOnly, style: ex
         ...extraStyle,
       }}
     />
-  );
-}
-
-function CopyButton({ text }) {
-  const [copied, setCopied] = useState(false);
-
-  function handleCopy() {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
-    });
-  }
-
-  return (
-    <button
-      onClick={handleCopy}
-      title="Copy to clipboard"
-      style={{
-        position: "absolute",
-        top: 10,
-        right: 10,
-        background: copied ? "var(--pass-dim)" : "var(--bg3)",
-        border: "1px solid var(--bd2)",
-        borderRadius: 7,
-        padding: "4px 10px",
-        font: "600 10px var(--mono)",
-        color: copied ? "var(--pass)" : "var(--fg2)",
-        cursor: "pointer",
-        letterSpacing: ".06em",
-        transition: "background 0.15s, color 0.15s",
-      }}
-    >
-      {copied ? "COPIED" : "COPY"}
-    </button>
-  );
-}
-
-function MonoBlock({ content }) {
-  return (
-    <div style={{ position: "relative" }}>
-      <pre
-        style={{
-          margin: 0,
-          background: "var(--bg0)",
-          border: "1px solid var(--bd)",
-          borderRadius: 10,
-          padding: "14px 46px 14px 14px",
-          font: "450 12px var(--mono)",
-          color: "var(--fg1)",
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-all",
-          lineHeight: 1.65,
-          overflowX: "auto",
-        }}
-      >
-        {content}
-      </pre>
-      <CopyButton text={content} />
-    </div>
   );
 }
 
@@ -407,87 +348,35 @@ function QuickTestPanel() {
 }
 
 // ---------------------------------------------------------------------------
-// Panel B: Bring your own agent
+// Panel B: Import agent
 // ---------------------------------------------------------------------------
 
-const TABS = [
-  { key: "http", label: "HTTP proxy" },
-  { key: "mcp", label: "MCP" },
-  { key: "sdk", label: "SDK" },
-];
+function ImportPanel() {
+  const navigate = useNavigate();
+  const [source, setSource] = useState("");
+  const [ref, setRef] = useState("");
+  const [command, setCommand] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState(null);
 
-function BringYourOwnPanel() {
-  const [info, setInfo] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [fetchError, setFetchError] = useState(null);
-  const [activeTab, setActiveTab] = useState("http");
-
-  useEffect(() => {
-    setLoading(true);
-    setFetchError(null);
-    getConnectInfo()
-      .then((data) => setInfo(data))
-      .catch(() => setFetchError("Could not load connect info. Is the API server running?"))
-      .finally(() => setLoading(false));
-  }, []);
-
-  function renderTabContent() {
-    if (!info) return null;
-    if (activeTab === "http") {
-      const envBlock = Object.entries(info.http.env_vars)
-        .map(([k, v]) => `export ${k}="${v}"`)
-        .join("\n");
-      const full = `${envBlock}\n\n${info.http.command}`;
-      return (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div>
-            <div
-              style={{
-                font: "500 11.5px var(--ui)",
-                color: "var(--fg2)",
-                marginBottom: 8,
-              }}
-            >
-              Set these env vars to route your agent through the Cassette proxy, then launch with the record command:
-            </div>
-            <MonoBlock content={full} />
-          </div>
-        </div>
-      );
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError(null);
+    setRunning(true);
+    try {
+      const body = { source };
+      if (ref.trim()) body.ref = ref.trim();
+      if (command.trim()) body.command = command.trim();
+      if (apiKey.trim()) body.env = { OPENAI_API_KEY: apiKey.trim() };
+      const result = await postAgentImport(body);
+      navigate(`/runs/${result.run_id}`);
+    } catch (err) {
+      const raw = err.message ?? "Import failed.";
+      setError(apiKey ? raw.replaceAll(apiKey, "[key]") : raw);
+    } finally {
+      setRunning(false);
     }
-    if (activeTab === "mcp") {
-      return (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div
-            style={{
-              font: "500 11.5px var(--ui)",
-              color: "var(--fg2)",
-              marginBottom: 4,
-            }}
-          >
-            Wrap your MCP-enabled agent with the recorder to capture all tool calls automatically:
-          </div>
-          <MonoBlock content={info.mcp} />
-        </div>
-      );
-    }
-    if (activeTab === "sdk") {
-      return (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div
-            style={{
-              font: "500 11.5px var(--ui)",
-              color: "var(--fg2)",
-              marginBottom: 4,
-            }}
-          >
-            Instrument your agent with the SDK hooks to record side-effecting tool calls inline:
-          </div>
-          <MonoBlock content={info.sdk} />
-        </div>
-      );
-    }
-    return null;
   }
 
   return (
@@ -501,7 +390,7 @@ function BringYourOwnPanel() {
         animation: "fadeup .25s ease",
       }}
     >
-      <SectionLabel>Bring your own agent</SectionLabel>
+      <SectionLabel>Import agent</SectionLabel>
       <p
         style={{
           margin: "0 0 20px",
@@ -510,63 +399,73 @@ function BringYourOwnPanel() {
           lineHeight: 1.6,
         }}
       >
-        Connect any external agent to Cassette. Choose the transport that matches your agent framework.
+        Paste a git URL or a local path. Cassette clones it, runs it in an isolated
+        container with recording wired in automatically, and captures the run. No
+        proxy setup needed.
       </p>
 
-      {loading && (
-        <div
-          style={{
-            font: "450 12.5px var(--ui)",
-            color: "var(--fg2)",
-            padding: "18px 0",
-          }}
-        >
-          Loading connect info...
+      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div>
+          <FieldLabel htmlFor="src">Repo URL or local path</FieldLabel>
+          <TextInput
+            id="src"
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            placeholder="https://github.com/you/agent.git  or  /path/to/agent"
+          />
         </div>
-      )}
 
-      {!loading && fetchError && <ErrorBanner message={fetchError} />}
+        <div>
+          <FieldLabel htmlFor="ref">Branch / ref (optional)</FieldLabel>
+          <TextInput id="ref" value={ref} onChange={(e) => setRef(e.target.value)} placeholder="main" />
+        </div>
 
-      {!loading && !fetchError && info && (
-        <>
-          {/* Tab bar */}
-          <div
+        <div>
+          <FieldLabel htmlFor="cmd">Run command (optional)</FieldLabel>
+          <TextInput
+            id="cmd"
+            value={command}
+            onChange={(e) => setCommand(e.target.value)}
+            placeholder="python main.py"
+          />
+        </div>
+
+        <div>
+          <FieldLabel htmlFor="key">Agent API key (optional)</FieldLabel>
+          <TextInput
+            id="key"
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder="sk-..."
+          />
+        </div>
+
+        {error && <ErrorBanner message={error} />}
+
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 4 }}>
+          <button
+            type="submit"
+            disabled={running || !source.trim()}
             style={{
-              display: "flex",
-              gap: 4,
-              marginBottom: 18,
-              borderBottom: "1px solid var(--bd)",
-              paddingBottom: 0,
+              background: running ? "var(--bg3)" : "var(--accent)",
+              color: running ? "var(--fg2)" : "var(--bg0)",
+              border: "none",
+              borderRadius: 10,
+              padding: "10px 22px",
+              font: "600 13px var(--ui)",
+              cursor: running ? "not-allowed" : "pointer",
             }}
           >
-            {TABS.map((tab) => {
-              const active = tab.key === activeTab;
-              return (
-                <button
-                  key={tab.key}
-                  onClick={() => setActiveTab(tab.key)}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    borderBottom: active ? "2px solid var(--accent)" : "2px solid transparent",
-                    padding: "8px 14px",
-                    font: active ? "600 12.5px var(--ui)" : "450 12.5px var(--ui)",
-                    color: active ? "var(--accent)" : "var(--fg2)",
-                    cursor: "pointer",
-                    marginBottom: "-1px",
-                    transition: "color 0.12s",
-                  }}
-                >
-                  {tab.label}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Tab content */}
-          {renderTabContent()}
-        </>
-      )}
+            {running ? "Importing..." : "Import & record"}
+          </button>
+          {running && (
+            <span style={{ font: "450 12px var(--ui)", color: "var(--fg2)" }}>
+              Cloning, building, and recording, this may take a moment...
+            </span>
+          )}
+        </div>
+      </form>
     </div>
   );
 }
@@ -604,7 +503,7 @@ export default function ConnectAgent() {
             color: "var(--fg2)",
           }}
         >
-          Run a quick test with a hosted model, or wire up your own agent via HTTP proxy, MCP, or the SDK.
+          Run a quick test with a hosted model, or import a repo (git URL or local path) to record it automatically.
         </p>
       </div>
 
@@ -618,7 +517,7 @@ export default function ConnectAgent() {
         }}
       >
         <QuickTestPanel />
-        <BringYourOwnPanel />
+        <ImportPanel />
       </div>
 
       <style>{`

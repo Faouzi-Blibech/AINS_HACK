@@ -3,6 +3,8 @@
 #
 # No API key is needed for replay/analysis demo. A key is only required for
 # recording fresh runs and can be supplied at runtime via the environment.
+#
+# Build context is the repo root (see docker-compose.yml: context: .).
 
 FROM python:3.12-slim
 
