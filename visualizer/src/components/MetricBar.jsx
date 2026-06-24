@@ -2,12 +2,14 @@
 // Falls back to placeholder values if the fetch fails.
 
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { getMetrics } from "../api/client.js";
 
-// Fallback static values shown while loading or on error.
+// Neutral placeholders shown only while the first fetch is in flight or on error
+// (no fake numbers, so the bar never disagrees with the Evaluation page).
 const FALLBACK = {
-  runs_24h: 18,
-  pass_rate: 0.67,
+  runs_24h: 0,
+  pass_rate: 0,
   contained_pct: 100,
   determinism_rate: 1.0,
 };
@@ -99,8 +101,11 @@ function MetricCard({ label, value, color, pts }) {
 }
 
 export default function MetricBar({ pageTitle, pageSub, onThemeToggle, theme }) {
+  const location = useLocation();
   const [metrics, setMetrics] = useState(() => buildMetrics(FALLBACK));
 
+  // Refetch on every navigation so the bar stays in sync with the Evaluation
+  // page after new runs are recorded (both read the same fork-excluded math).
   useEffect(() => {
     let cancelled = false;
     getMetrics()
@@ -108,12 +113,12 @@ export default function MetricBar({ pageTitle, pageSub, onThemeToggle, theme }) 
         if (!cancelled) setMetrics(buildMetrics(data));
       })
       .catch(() => {
-        // keep fallback; MetricBar must be resilient
+        // keep current values; MetricBar must be resilient
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [location.pathname]);
 
   return (
     <header

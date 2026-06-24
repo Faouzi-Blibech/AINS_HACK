@@ -19,7 +19,8 @@ def test_llm_step_shape():
     s = _llm_step()
     assert s["type"] == "llm_call" and s["transport"] == "http"
     assert s["model"] == "m" and s["side_effecting"] is False
-    assert s["confidence"] is None and s["causal_parents"] == []
+    # confidence is now a heuristic record-time proxy (0..1), not None.
+    assert isinstance(s["confidence"], (int, float)) and s["causal_parents"] == []
     assert s["token_usage"] == {"prompt": 5, "completion": 2}
     assert fetch_blob(s["prompt_blob"]).startswith("{")
 

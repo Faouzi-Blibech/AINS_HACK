@@ -59,7 +59,11 @@ def build_step(*, step_id, prev_step_id, method, url, req_body, status_code,
         "latency_ms": latency_ms,
         "status": "ok" if status_code < 400 else "error",
         "side_effecting": side_effecting,
-        "confidence": None,
+        "confidence": heuristic_confidence(
+            step_type=kind,
+            status="ok" if status_code < 400 else "error",
+            side_effecting=side_effecting,
+        ),
         "causal_parents": [prev_step_id] if prev_step_id else [],
     }
     step["status_code"] = status_code
@@ -88,6 +92,23 @@ def build_step(*, step_id, prev_step_id, method, url, req_body, status_code,
     return step
 
 
+def heuristic_confidence(*, step_type: str, status: str = "ok",
+                         side_effecting: bool = False, has_content: bool = True) -> float:
+    """A no-LLM, record-time confidence proxy so the UI's confidence bar is
+    populated (and low-confidence steps are flagged) without an API key.
+
+    It is a heuristic, not a model-reported probability: errored steps are low;
+    a content-bearing llm_call is high; an empty/reasoning-only llm_call is
+    flagged for review; read-only tools rank slightly above side-effecting ones.
+    """
+    if status == "error":
+        return 0.3
+    if step_type == "llm_call":
+        return 0.9 if has_content else 0.65
+    # tool_call
+    return 0.95 if not side_effecting else 0.88
+
+
 def sdk_identity(tool: str, args: dict, volatile: list[str]) -> str:
     """Id for a native (SDK) tool call: tool name + canonical, volatile-stripped args."""
     stripped = _strip_volatile(args or {}, set(volatile)) if volatile else (args or {})
@@ -98,7 +119,7 @@ def sdk_identity(tool: str, args: dict, volatile: list[str]) -> str:
 def build_sdk_step(*, step_id, prev_step_id, tool, args, result, side_effecting,
                    latency_ms, ts_ms, policy: Policy,
                    parallel_group: str | None = None,
-                   causal_parents: list | None = None) -> dict:
+                   causal_parents: list | None = None, status: str = "ok") -> dict:
     args = args or {}
     args_blob = store_blob(policy.redact_body(json.dumps(args, default=str)))
     result_blob = store_blob(policy.redact_body(json.dumps(result, default=str)))
@@ -108,10 +129,10 @@ def build_sdk_step(*, step_id, prev_step_id, tool, args, result, side_effecting,
         "transport": "sdk",
         "timestamp_ms": ts_ms,
         "latency_ms": latency_ms,
-        "status": "ok",
-        "status_code": 200,
+        "status": status,
+        "status_code": 200 if status == "ok" else 500,
         "side_effecting": side_effecting,
-        "confidence": None,
+        "confidence": heuristic_confidence(step_type="tool_call", status=status, side_effecting=side_effecting),
         "causal_parents": (causal_parents if causal_parents is not None
                            else ([prev_step_id] if prev_step_id else [])),
         "tool": tool,

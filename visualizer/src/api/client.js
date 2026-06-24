@@ -85,6 +85,11 @@ export function postDiverge(runId, { step_id, target, value }) {
   return _post(`/runs/${encodeURIComponent(runId)}/diverge`, { step_id, target, value });
 }
 
+/** POST /runs/{run_id}/record-over  ->  re-run the agent live from the fork with a new value */
+export function postRecordOver(runId, { value, step_id }) {
+  return _post(`/runs/${encodeURIComponent(runId)}/record-over`, { value, step_id });
+}
+
 /** POST /runs/{run_id}/counterfactual  ->  {available, variants?, winner?, confidence?, rationale?} */
 export function postCounterfactual(runId, { step_id, n }) {
   return _post(`/runs/${encodeURIComponent(runId)}/counterfactual`, { step_id, n });

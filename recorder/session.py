@@ -31,13 +31,17 @@ class ReplayDivergence(Exception):
 class RecordingSession:
     def __init__(self, *, mode: str, store: TraceStore, run_id: str, policy: Policy,
                  replayer=None, register_run: bool = True,
-                 schema_version: str = "1.0") -> None:
+                 schema_version: str = "1.0", agent: str = "",
+                 parent_run_id: str | None = None, fork_step_id: int | None = None) -> None:
         self.mode = mode
         self.store = store
         self.run_id = run_id
         self.policy = policy
         self.replayer = replayer
         self.schema_version = schema_version
+        self.agent = agent
+        self.parent_run_id = parent_run_id
+        self.fork_step_id = fork_step_id
         self._counter = 0
         self._lock = threading.Lock()
         self._token = None
@@ -58,9 +62,12 @@ class RecordingSession:
     # lifecycle ---------------------------------------------------------
     def start(self) -> "RecordingSession":
         if self.mode == "record" and self._register_run:
-            self.store.start_run(self.run_id, agent="", mode="record",
+            self.store.start_run(self.run_id, agent=self.agent,
+                                 mode="record-over" if self.parent_run_id else "record",
                                  created_at_ms=int(self._t0 * 1000),
-                                 schema_version=self.schema_version)
+                                 schema_version=self.schema_version,
+                                 parent_run_id=self.parent_run_id,
+                                 fork_step_id=self.fork_step_id)
         self._token = _active.set(self)
         return self
 
@@ -69,7 +76,15 @@ class RecordingSession:
 
     def __exit__(self, *exc) -> None:
         if self.mode == "record" and self._register_run:
-            self.store.finish_run(self.run_id, status="ok",
+            # Run status reflects the recorded steps: error if any step errored.
+            status = "ok"
+            try:
+                doc = self.store.get_run(self.run_id)
+                if any(s.get("status") == "error" for s in doc.get("steps", [])):
+                    status = "error"
+            except Exception:
+                pass
+            self.store.finish_run(self.run_id, status=status,
                                   duration_ms=int((time.time() - self._t0) * 1000))
         if self._token is not None:
             _active.reset(self._token)
@@ -134,7 +149,8 @@ class RecordingSession:
         return None
 
     # record ------------------------------------------------------------
-    def record_sdk(self, *, tool, args, result, side_effecting, latency_ms, ts_ms) -> None:
+    def record_sdk(self, *, tool, args, result, side_effecting, latency_ms, ts_ms,
+                   status: str = "ok") -> None:
         sid = self.next_step_id()
         default_parents = [sid - 1] if sid > 1 else []
         parallel_group, causal_parents = self.take_parallel_for_tool(sid, default_parents)
@@ -143,7 +159,7 @@ class RecordingSession:
                               side_effecting=side_effecting, latency_ms=latency_ms,
                               ts_ms=ts_ms, policy=self.policy,
                               parallel_group=parallel_group,
-                              causal_parents=causal_parents)
+                              causal_parents=causal_parents, status=status)
         try:
             self.store.append_step(self.run_id, step)
         except Exception as exc:  # record is best-effort, never crash the agent

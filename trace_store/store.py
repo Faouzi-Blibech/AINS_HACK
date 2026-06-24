@@ -256,6 +256,14 @@ class TraceStore:
 
         return doc
 
+    def delete_run(self, run_id: str) -> None:
+        """Remove a run and its steps if present (idempotent). Lets a run be
+        re-recorded under an existing run_id without a UNIQUE collision."""
+        with self._lock:
+            self._conn.execute("DELETE FROM steps WHERE run_id = ?", (run_id,))
+            self._conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
+            self._conn.commit()
+
     def list_runs(self) -> list[dict[str, Any]]:
         """Return a list of run-level summary dicts (no steps)."""
         with self._lock:

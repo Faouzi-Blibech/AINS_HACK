@@ -3,7 +3,11 @@
 // Uses inline styles + var(--*) tokens only. No Tailwind classes.
 
 import { useState } from "react";
-import { postInject, postDiverge, postCounterfactual } from "../api/client.js";
+import { Link } from "react-router-dom";
+import { postInject, postDiverge, postCounterfactual, postRecordOver } from "../api/client.js";
+
+// Runs from these local agents can be re-run live from the fork (record-over).
+const RERUNNABLE_AGENTS = new Set(["agent.ops_incident_agent"]);
 
 // ---- Tab bar ----
 
@@ -695,27 +699,29 @@ function CounterfactualsTab({ runId, selectedStepId, blame }) {
 // ---- Divergence tab ----
 
 function DivergenceTab({ runId, selectedStepId, trace, steps }) {
+  // Re-runnable runs (recorded by a local Cassette agent) do a LIVE record-over:
+  // the agent re-runs from its decision and can take a genuinely different path.
+  // Others fall back to a faithful-replay fork.
+  const rerunnable = RERUNNABLE_AGENTS.has(trace?.agent);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
-  const [whatIf, setWhatIf] = useState("high");
+  const [whatIf, setWhatIf] = useState(rerunnable ? "SEV-4" : "high");
 
   // Determine step to fork at and pick target type
   const forkStepId = selectedStepId ?? steps?.[0]?.step_id ?? null;
   const selectedStep = steps?.find((s) => s.step_id === forkStepId);
-  const target = selectedStep?.step_type === "tool_call" ? "result" : "response";
+  const target = selectedStep?.type === "tool_call" ? "result" : "response";
 
   const handleFork = async () => {
-    if (forkStepId == null) return;
+    if (!rerunnable && forkStepId == null) return;
     setLoading(true);
     setError(null);
     setResult(null);
     try {
-      const data = await postDiverge(runId, {
-        step_id: forkStepId,
-        target,
-        value: whatIf,
-      });
+      const data = rerunnable
+        ? await postRecordOver(runId, { value: whatIf, step_id: forkStepId })
+        : await postDiverge(runId, { step_id: forkStepId, target, value: whatIf });
       setResult(data);
     } catch (err) {
       setError(err.message);
@@ -779,17 +785,17 @@ function DivergenceTab({ runId, selectedStepId, trace, steps }) {
           />
         </svg>
         <span style={{ font: "450 11px var(--mono)", color: "var(--accent)" }}>
-          {result
-            ? `fork @ step ${forkStepLabel} · ${editedLabel}`
-            : `fork @ step ${forkStepId ?? "?"} · ${target}`}
+          {rerunnable
+            ? (result ? `record-over · ${editedLabel}` : "record-over · re-runs the agent")
+            : (result ? `fork @ step ${forkStepLabel} · ${editedLabel}` : `fork @ step ${forkStepId ?? "?"} · ${target}`)}
         </span>
 
         {!result && (
           <input
             value={whatIf}
             onChange={(e) => setWhatIf(e.target.value)}
-            placeholder="what-if value"
-            title="The alternative value to inject at this step"
+            placeholder={rerunnable ? "new severity, e.g. SEV-4" : "what-if value"}
+            title={rerunnable ? "Re-run the agent with this decision value" : "The alternative value to inject at this step"}
             style={{
               marginLeft: "auto",
               width: 170,
@@ -806,17 +812,17 @@ function DivergenceTab({ runId, selectedStepId, trace, steps }) {
         {!result && (
           <button
             onClick={handleFork}
-            disabled={loading || forkStepId == null}
+            disabled={loading || (!rerunnable && forkStepId == null)}
             style={{
               marginLeft: 8,
               background:
-                loading || forkStepId == null ? "var(--bg3)" : "var(--accent)",
-              color: loading || forkStepId == null ? "var(--fg2)" : "#fff",
+                loading || (!rerunnable && forkStepId == null) ? "var(--bg3)" : "var(--accent)",
+              color: loading || (!rerunnable && forkStepId == null) ? "var(--fg2)" : "#fff",
               border: "none",
               borderRadius: 9,
               padding: "8px 14px",
               font: "600 12px var(--ui)",
-              cursor: loading || forkStepId == null ? "default" : "pointer",
+              cursor: loading || (!rerunnable && forkStepId == null) ? "default" : "pointer",
               display: "flex",
               alignItems: "center",
               gap: 6,
@@ -824,7 +830,7 @@ function DivergenceTab({ runId, selectedStepId, trace, steps }) {
             }}
           >
             {loading ? <Spinner /> : null}
-            Fork at step {forkStepId ?? "?"}
+            {rerunnable ? `Re-run as ${whatIf}` : `Fork at step ${forkStepId ?? "?"}`}
           </button>
         )}
       </div>
@@ -1042,6 +1048,22 @@ function DivergenceTab({ runId, selectedStepId, trace, steps }) {
               Edited fields: {editedFields.join(", ")}
             </div>
           )}
+          {result.fork_run_id && (
+            <div style={{ marginTop: 8, font: "450 11px var(--ui)", color: "var(--fg1)" }}>
+              Forked run{" "}
+              <Link
+                to={`/runs/${result.fork_run_id}`}
+                style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--accent)" }}
+              >
+                {result.fork_run_id}
+              </Link>{" "}
+              · outcome{" "}
+              <span style={{ fontFamily: "var(--mono)", fontSize: 10.5 }}>
+                {result.final_status ?? "?"}
+              </span>
+              {rerunnable && " · the agent re-ran and took this path"}
+            </div>
+          )}
           <div
             style={{
               marginTop: 6,
@@ -1059,8 +1081,12 @@ function DivergenceTab({ runId, selectedStepId, trace, steps }) {
 
 // ---- Dock (main export) ----
 
-export default function Dock({ trace, blame, selectedStepId }) {
-  const [activeTab, setActiveTab] = useState("Debug agent");
+export default function Dock({ trace, blame, selectedStepId, activeTab: activeTabProp, onTabChange }) {
+  // Controlled when a parent passes activeTab/onTabChange (e.g. the OVER button
+  // focuses the Divergence tab); otherwise self-managed.
+  const [internalTab, setInternalTab] = useState("Debug agent");
+  const activeTab = activeTabProp ?? internalTab;
+  const setActiveTab = onTabChange ?? setInternalTab;
 
   const runId = trace?.run_id;
   const steps = trace?.steps ?? [];

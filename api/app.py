@@ -231,9 +231,11 @@ class DivergeRequest(BaseModel):
 
 class DivergeDiff(BaseModel):
     fork_step_id: Optional[int] = None
-    original_steps: int
-    forked_steps: int
-    edited_fields: List[str]
+    # Compact per-step rows ({step_id, step_type, tool_name}) so the UI can render
+    # an actual original-vs-forked trajectory diff (not just a count).
+    original_steps: List[dict] = []
+    forked_steps: List[dict] = []
+    edited_fields: List[str] = []
 
 
 class DivergeResponse(BaseModel):
@@ -686,6 +688,14 @@ def inject(run_id: str, body: InjectRequest) -> Any:
 _FAILED_STATES = ("error", "failed", "timeout", "aborted")
 
 
+def _step_summaries(doc) -> list[dict]:
+    """Compact per-step rows for the divergence diff UI (id, type, tool name)."""
+    return [
+        {"step_id": s.get("step_id"), "step_type": s.get("type"), "tool_name": s.get("tool")}
+        for s in doc.get("steps", [])
+    ]
+
+
 def _maybe_learn_failure(original_doc, fork_step_id, target, value, fork_outcome) -> None:
     """Persist a real failure->fix entry when a fork actually resolves a failure.
 
@@ -750,13 +760,74 @@ def diverge(run_id: str, body: DivergeRequest) -> DivergeResponse:
     # Learn from a resolved failure (best-effort, deduped, keeps seeds intact).
     _maybe_learn_failure(original_doc, body.step_id, body.target, body.value, outcome)
 
+    fork_doc = store.get_run(fork_run_id)
     return DivergeResponse(
         fork_run_id=fork_run_id,
         diff=DivergeDiff(
             fork_step_id=diff.get("fork_step_id"),
-            original_steps=diff["original_steps"],
-            forked_steps=diff["forked_steps"],
+            original_steps=_step_summaries(original_doc),
+            forked_steps=_step_summaries(fork_doc),
             edited_fields=diff["edited_fields"],
+        ),
+        final_status=outcome.final_status,
+        side_effect_count=outcome.side_effect_count,
+    )
+
+
+class RecordOverRequest(BaseModel):
+    value: str
+    step_id: Optional[int] = None  # informational; the decision step is found by the agent
+
+
+# Runs recorded by these local agents can be RE-RUN live from a fork (record-over):
+# module path -> the env var the agent reads for its branching decision.
+_RERUNNABLE_AGENTS = {
+    "agent.ops_incident_agent": "CASSETTE_OPS_SEVERITY",
+}
+
+
+@app.post("/runs/{run_id}/record-over", response_model=DivergeResponse, tags=["dock"])
+def record_over_run(run_id: str, body: RecordOverRequest) -> DivergeResponse:
+    """Record-over: re-run a re-runnable local agent from its decision step with an
+    overridden value, producing a genuinely divergent trajectory (the agent takes a
+    new path), not just a faithful-replay fork. 422 when the run has no re-runnable
+    agent (those can only be forked via /diverge)."""
+    try:
+        doc = store.get_run(run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="run not found")
+    module = doc.get("agent") or ""
+    override_env = _RERUNNABLE_AGENTS.get(module)
+    if not override_env:
+        raise HTTPException(
+            status_code=422,
+            detail=("This run has no re-runnable agent, so it can only be forked by faithful "
+                    "replay (use Fork). Live record-over works on runs recorded by a local "
+                    "Cassette agent."),
+        )
+    from recorder.run_agent import record_over as _record_over
+    try:
+        fork = _record_over(module=module, base_run_id=run_id,
+                            override_env=override_env, value=body.value, store=store)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"record-over failed: {exc}")
+
+    fork_id = fork.get("run_id")
+    outcome = StoreReplayEngine(store).replay(fork_id)
+    decision_step = next(
+        (s["step_id"] for s in doc.get("steps", []) if s.get("tool") == "assess_severity"),
+        None,
+    )
+    # If this re-run fixed a real failure, learn it into the failure memory.
+    if decision_step is not None:
+        _maybe_learn_failure(doc, decision_step, "severity", body.value, outcome)
+    return DivergeResponse(
+        fork_run_id=fork_id,
+        diff=DivergeDiff(
+            fork_step_id=decision_step,
+            original_steps=_step_summaries(doc),
+            forked_steps=_step_summaries(fork),
+            edited_fields=["severity"],
         ),
         final_status=outcome.final_status,
         side_effect_count=outcome.side_effect_count,
