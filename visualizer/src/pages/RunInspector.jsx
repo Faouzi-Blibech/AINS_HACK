@@ -13,8 +13,9 @@ import Trajectory from "../components/Trajectory.jsx";
 import StepInspector from "../StepInspector.jsx";
 import Dock from "../components/Dock.jsx";
 
-// Transport controls: REC / PLAY / OVER (visual only)
-function TransportControls({ isPlaying, onPlay }) {
+// Transport controls: REC (visual) / PLAY (steps the tape) / OVER (record-over:
+// jumps to the Divergence tab where you inject a change and fork the trajectory).
+function TransportControls({ isPlaying, onPlay, onOver, overActive }) {
   const [isRec, setIsRec] = useState(false);
 
   return (
@@ -85,8 +86,10 @@ function TransportControls({ isPlaying, onPlay }) {
         {isPlaying ? "STOP" : "PLAY"}
       </button>
 
-      {/* OVER */}
+      {/* OVER -- record-over: open the Divergence tab to inject + fork */}
       <button
+        onClick={onOver}
+        title="Record-over: replay to a step, inject a change, and fork the trajectory (opens the Divergence tab)"
         style={{
           display: "flex",
           alignItems: "center",
@@ -94,15 +97,15 @@ function TransportControls({ isPlaying, onPlay }) {
           padding: "7px 12px",
           borderRadius: 9,
           border: "none",
-          background: "transparent",
-          color: "var(--fg2)",
+          background: overActive ? "var(--accent-dim)" : "transparent",
+          color: overActive ? "var(--accent)" : "var(--fg2)",
           font: "600 11px var(--mono)",
           letterSpacing: ".05em",
           cursor: "pointer",
           transition: "background 0.12s, color 0.12s",
         }}
-        onMouseEnter={(e) => { e.currentTarget.style.background = "var(--hover)"; e.currentTarget.style.color = "var(--fg0)"; }}
-        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--fg2)"; }}
+        onMouseEnter={(e) => { if (!overActive) { e.currentTarget.style.background = "var(--hover)"; e.currentTarget.style.color = "var(--fg0)"; } }}
+        onMouseLeave={(e) => { if (!overActive) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--fg2)"; } }}
       >
         <svg width="13" height="13" viewBox="0 0 16 16" style={{ marginRight: 2 }}>
           <path d="M5 3v6a3 3 0 003 3h3M11 9l3 3-3 3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
@@ -125,6 +128,9 @@ export default function RunInspector() {
   const [error, setError] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const rootCauseRef = useRef(null);
+  const dockRef = useRef(null);
+  const [dockTab, setDockTab] = useState("Debug agent");
+  const [overActive, setOverActive] = useState(false);
 
   // Resolve the effective run id -- "latest" maps to first available or fixture
   const effectiveRunId = runId === "latest" ? "run-fixture-001" : runId;
@@ -208,6 +214,14 @@ export default function RunInspector() {
 
   const scrollToRootCause = () => {
     rootCauseRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  // OVER = record-over: focus the Divergence tab (inject a change + fork the
+  // trajectory) and scroll the analysis dock into view.
+  const handleOver = () => {
+    setOverActive(true);
+    setDockTab("Divergence");
+    dockRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   // Memory match: only a real match -- library entry whose blame_step equals blame.root_cause_step_id.
@@ -386,7 +400,7 @@ export default function RunInspector() {
 
         {/* Transport controls */}
         <div style={{ marginLeft: "auto" }}>
-          <TransportControls isPlaying={isPlaying} onPlay={handlePlayToggle} />
+          <TransportControls isPlaying={isPlaying} onPlay={handlePlayToggle} onOver={handleOver} overActive={overActive} />
         </div>
 
         {/* Root-cause pill */}
@@ -501,7 +515,15 @@ export default function RunInspector() {
       </div>
 
       {/* ===== ANALYSIS DOCK ===== */}
-      <Dock trace={trace} blame={blame} selectedStepId={selectedStepId} />
+      <div ref={dockRef}>
+        <Dock
+          trace={trace}
+          blame={blame}
+          selectedStepId={selectedStepId}
+          activeTab={dockTab}
+          onTabChange={setDockTab}
+        />
+      </div>
     </div>
   );
 }

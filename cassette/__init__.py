@@ -1,5 +1,5 @@
-"""Cassette: user-facing control layer (CLI, local store, trust, launchers).
+"""Cassette: local store layout and per-process CA-trust plumbing.
 
-Orchestrates the recorder/ proxy core to record an unmodified agent into a
-persistent local store (~/.cassette) that the API/UI read.
+Store paths (~/.cassette) consumed by the API/UI, plus the in-process trust
+shim. The CLI has been removed; agent import/recording is API-driven.
 """
