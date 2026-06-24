@@ -154,7 +154,7 @@ def resolves_at_for(run_id: str, doc: dict) -> set[int]:
     Sourced from data, not hardcoded: the local store's resolves.json, then the
     bundled fixture's resolves.json, then a per-step `expected_root_cause` marker.
     """
-    from cassette import paths as _paths
+    from trace_store import paths as _paths
 
     candidates = [
         _paths.resolves_path(),
@@ -293,6 +293,20 @@ class AgentRunResponse(BaseModel):
     steps: int
 
 
+class AgentImportRequest(BaseModel):
+    source: str
+    ref: Optional[str] = None
+    subdir: Optional[str] = None
+    command: Optional[str] = None
+    env: Optional[dict[str, str]] = None
+
+
+class AgentImportResponse(BaseModel):
+    run_id: str
+    status: str
+    steps: int
+
+
 class ConnectHttpInfo(BaseModel):
     env_vars: dict[str, str]
     command: str
@@ -349,6 +363,33 @@ def _launch_hosted_run(
         cmd, capture_output=True, text=True,
         timeout=_AGENT_RUN_TIMEOUT, env=env,
     )
+
+
+def _launch_import_run(run_id, source, ref, subdir, command, env):
+    """Resolve source, ensure the runner image, and run the agent container.
+
+    Returns a CompletedProcess. Secret env values are exported into THIS process
+    so the container inherits them by name (never placed on the command line).
+    """
+    import shlex
+    from recorder import import_agent
+
+    meta = import_agent.resolve_source(
+        source, ref=ref, subdir=subdir,
+        dest_root=str(Path(DB_PATH).resolve().parent / "imports"),
+    )
+    image = import_agent.ensure_image()
+    workspace = meta.path if not meta.subdir else str(Path(meta.path) / meta.subdir)
+
+    cmd_list = shlex.split(command) if command else None
+    store_home = str(Path(DB_PATH).resolve().parent)
+    argv = import_agent.build_run_argv(
+        image=image, workspace=workspace, store_home=store_home, run_id=run_id,
+        command=cmd_list, env=env,
+    )
+    # export secrets so the `-e KEY` flags resolve, then run
+    os.environ.update({k: v for k, v in (env or {}).items()})
+    return import_agent.run_container(argv, timeout=_AGENT_RUN_TIMEOUT)
 
 
 # ---------------------------------------------------------------------------
@@ -969,6 +1010,38 @@ def agents_run(body: AgentRunRequest) -> AgentRunResponse:
         steps = 0
 
     return AgentRunResponse(run_id=run_id, status="ok", steps=steps)
+
+
+@app.post("/agents/import", response_model=AgentImportResponse, tags=["agents"])
+def agents_import(body: AgentImportRequest) -> AgentImportResponse:
+    """Import an external agent (git URL or local path), run it in a container, record it."""
+    run_id = f"import-{uuid.uuid4().hex[:8]}"
+    try:
+        proc = _launch_import_run(
+            run_id=run_id, source=body.source, ref=body.ref,
+            subdir=body.subdir, command=body.command, env=body.env,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except subprocess.TimeoutExpired:
+        raise HTTPException(
+            status_code=504,
+            detail=f"Import exceeded {_AGENT_RUN_TIMEOUT}s; raise CASSETTE_AGENT_RUN_TIMEOUT.",
+        )
+
+    if proc.returncode != 0:
+        combined = (proc.stderr or "") + (proc.stdout or "")
+        secret = " ".join((body.env or {}).values())
+        scrubbed = _scrub_subprocess_output(combined, secret, body.source)
+        detail = scrubbed or f"Import runner exited with code {proc.returncode}."
+        print(f"[agents/import] runner failed (code {proc.returncode})")
+        raise HTTPException(status_code=502, detail=detail)
+
+    try:
+        steps = len(store.get_run(run_id).get("steps", []))
+    except KeyError:
+        steps = 0
+    return AgentImportResponse(run_id=run_id, status="ok", steps=steps)
 
 
 @app.get("/agents/connect-info", response_model=ConnectInfo, tags=["agents"])

@@ -1,5 +1,5 @@
 from pathlib import Path
-from cassette import paths
+from trace_store import paths
 
 
 def test_home_honors_env(tmp_path, monkeypatch):

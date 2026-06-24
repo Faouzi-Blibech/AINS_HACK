@@ -236,11 +236,10 @@ visualizer/dist/
 api/*.sqlite3
 api/*.sqlite3-journal
 
-# Cassette runtime DB (bind-mounted, written by Docker). Tracking it caused
-# "database disk image is malformed" when git rewrote the file under a live
-# writer. Regenerated and reseeded on every startup, so it never belongs in git.
-# Blobs are content-addressed and immutable, so they stay tracked for seeding.
-.cassette-data/cassette.sqlite3
-.cassette-data/cassette.sqlite3-wal
-.cassette-data/cassette.sqlite3-shm
-.cassette-data/cassette.sqlite3-journal
+# Cassette runtime store (bind-mounted, written by Docker). Tracking the DB
+# caused "database disk image is malformed" when git rewrote the file under a
+# live writer. The whole dir is regenerated at runtime: the API reseeds the DB,
+# and api/app.py:_sync_fixture_blobs() repopulates blobs from docs/fixtures/blobs
+# on startup, so the canonical seed data lives in docs/fixtures/ only and nothing
+# under .cassette-data/ belongs in git.
+.cassette-data/

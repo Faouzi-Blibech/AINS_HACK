@@ -15,27 +15,39 @@ To record new traces, add a `GROQ_API_KEY` to `.env` (see `.env.example`).
 
 ---
 
-## Integrate your own agent
+## Import your own agent
 
-Cassette records your own agent without any code change.
+Cassette records your own agent without any code change. You give it one input
+(a git URL or a local path) and it does the rest: it clones the repo, runs it in
+an isolated Docker container with the recording proxy and CA wired in
+automatically, and captures the run. There is no manual proxy or certificate
+setup.
 
-**Local agent (one command):**
+**In the UI:** open **Connect agent**, use the **Import** panel, paste a git URL
+(or a local path), optionally add a branch, a run command, and the agent's own
+API key, then click **Import and record**. The run opens at
+http://localhost:5173 when it finishes.
 
-    cassette run -- python your_agent.py     # first run asks once to trust + record
+**Via the API:**
 
-The run appears in the UI at http://localhost:5173. To auto-record every future
-session, run `cassette enable -- python your_agent.py` once and add
-`~/.cassette/bin` to your PATH.
+    curl -X POST http://localhost:8000/agents/import \
+      -H 'Content-Type: application/json' \
+      -d '{"source": "https://github.com/you/agent.git", "command": "python main.py"}'
 
-**Agent on a server / separate terminal:**
+What gets captured:
 
-    cassette serve            # starts the recorder, prints the env block
-    cassette trust            # one-time: trust the CA for httpx-based agents
+- **HTTP and MCP** tool/LLM calls: any language, transparently.
+- **SDK (native in-process) tools:** Python agents, when the repo declares them
+  in a `cassette.toml` tool manifest (or via the run entry point). The agent's
+  source is never modified.
 
-Paste the printed env block into the agent's shell and run it normally.
+Docker is required (the agent runs in a container). Recordings live under the
+shared store; set `CASSETTE_HOME` (and point `CASSETTE_DB_PATH` /
+`CASSETTE_BLOB_DIR` at it) before `docker compose up` so the API/UI and the
+import container read and write the same store.
 
-Recordings live in `~/.cassette/` (set `CASSETTE_HOME` to relocate). Export
-`CASSETTE_HOME` before `docker compose up` so the UI reads that store.
+> The previous `cassette` CLI (`run` / `enable` / `serve` / `trust`) has been
+> removed; importing and recording is now API-driven (and surfaced in the UI).
 
 ---
 
@@ -235,7 +247,8 @@ docker compose up --build
 ```
 
 **Record live runs:** add `GROQ_API_KEY` to `.env` (see `.env.example`), then use
-Connect agent → Quick test (Groq recommended) in the UI, or `cassette run -- <your agent>`.
+Connect agent → Quick test (Groq recommended) in the UI, or Connect agent →
+Import to bring in your own agent by git URL or local path.
 
 **Run the test suite:**
 

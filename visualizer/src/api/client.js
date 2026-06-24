@@ -104,3 +104,8 @@ export function postAgentRun(body) {
 export function getConnectInfo() {
   return _get("/agents/connect-info");
 }
+
+/** POST /agents/import  ->  {run_id, status, steps} */
+export function postAgentImport(body) {
+  return _post("/agents/import", body);
+}
