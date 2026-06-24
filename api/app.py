@@ -84,6 +84,10 @@ EVAL_RESULTS_PATH = os.environ.get(
     "CASSETTE_EVAL_RESULTS",
     str(_REPO_ROOT / "eval" / "results.json"),
 )
+RELIABILITY_RESULTS_PATH = os.environ.get(
+    "CASSETTE_RELIABILITY_RESULTS",
+    str(_REPO_ROOT / "eval" / "reliability.json"),
+)
 
 # ---------------------------------------------------------------------------
 # Store initialisation and seeding (happens at import time)
@@ -189,11 +193,21 @@ class EvalMetric(BaseModel):
     unit: str
 
 
+class ReliabilityCheck(BaseModel):
+    check: str
+    correct: int
+    total: int
+    errored: int = 0
+    rate: Optional[float] = None
+    notes: str = ""
+
+
 class EvalReport(BaseModel):
     available: bool
     generated_at: Optional[str] = None
     metrics: list[EvalMetric] = []
     caveats: list[str] = []
+    reliability_checks: list[ReliabilityCheck] = []
 
 
 # ---------------------------------------------------------------------------
@@ -586,6 +600,65 @@ def get_metrics() -> MetricsResponse:
     )
 
 
+def _load_harness_metrics() -> list[EvalMetric]:
+    """Quality metrics that cannot be derived from the run store alone.
+
+    Reads the harness output (semantic-match precision/recall and root-cause
+    accuracy from eval/results.json) and the optional AI-reliability study
+    (eval/reliability.json, written by ai_agents.demo_reliability). These
+    complement the live store metrics and match the written evaluation report.
+    Missing or malformed files are ignored so /eval never fails because of them.
+    """
+    out: list[EvalMetric] = []
+    try:
+        with open(EVAL_RESULTS_PATH, encoding="utf-8") as fh:
+            data = json.load(fh)
+        wanted = {"semantic_match_precision", "semantic_match_recall", "root_cause_accuracy"}
+        for m in data.get("metrics", []):
+            if m.get("key") in wanted:
+                out.append(EvalMetric(
+                    key=m["key"], label=m["label"], value=m.get("value"),
+                    target_text=m.get("target_text", "-"),
+                    passed=m.get("passed"), unit=m.get("unit", "fraction"),
+                ))
+    except (OSError, ValueError, KeyError):
+        pass
+    try:
+        with open(RELIABILITY_RESULTS_PATH, encoding="utf-8") as fh:
+            rel = json.load(fh)
+        rate = rel.get("rate")
+        if rate is not None:
+            out.append(EvalMetric(
+                key="ai_reliability",
+                label="AI Reliability (repeat runs)",
+                value=rate, target_text="> 90%",
+                passed=rate > 0.90, unit="fraction",
+            ))
+    except (OSError, ValueError, KeyError):
+        pass
+    return out
+
+
+def _load_reliability_checks() -> list[ReliabilityCheck]:
+    """Per-check reliability breakdown from eval/reliability.json (optional)."""
+    try:
+        with open(RELIABILITY_RESULTS_PATH, encoding="utf-8") as fh:
+            rel = json.load(fh)
+        return [
+            ReliabilityCheck(
+                check=c.get("check", ""),
+                correct=c.get("correct", 0),
+                total=c.get("total", 0),
+                errored=c.get("errored", 0),
+                rate=c.get("rate"),
+                notes=c.get("notes", ""),
+            )
+            for c in rel.get("checks", [])
+        ]
+    except (OSError, ValueError, KeyError):
+        return []
+
+
 @app.get("/eval", response_model=EvalReport, tags=["eval"])
 def get_eval_report() -> EvalReport:
     """Compute evaluation metrics live from the recorded runs in the store.
@@ -600,9 +673,25 @@ def get_eval_report() -> EvalReport:
     try:
         runs = [r for r in store.list_runs() if not r.get("parent_run_id")]
     except Exception:
-        return EvalReport(available=False, metrics=[], caveats=[])
+        runs = []
 
+    harness_metrics = _load_harness_metrics()
+    reliability_checks = _load_reliability_checks()
+
+    # No live runs yet: still show the harness quality metrics if available, so
+    # the page is never blank before the first run is recorded.
     if not runs:
+        if harness_metrics:
+            return EvalReport(
+                available=True,
+                generated_at=datetime.now(timezone.utc).isoformat(),
+                metrics=harness_metrics,
+                caveats=[
+                    "No agent runs recorded yet; showing quality metrics from the "
+                    "evaluation harness. Record a run to populate the live metrics.",
+                ],
+                reliability_checks=reliability_checks,
+            )
         return EvalReport(available=False, metrics=[], caveats=[])
 
     ok = sum(1 for r in runs if r.get("status") == "ok")
@@ -615,9 +704,12 @@ def get_eval_report() -> EvalReport:
     checked = 0
     total_side_effects = 0
     total_steps = 0
+    side_effecting_intercepted = 0
     for r in runs:
         try:
-            total_steps += len(store.get_run(r["run_id"]).get("steps", []))
+            steps = store.get_run(r["run_id"]).get("steps", [])
+            total_steps += len(steps)
+            side_effecting_intercepted += sum(1 for s in steps if s.get("side_effecting"))
         except KeyError:
             pass
         checked += 1
@@ -640,20 +732,31 @@ def get_eval_report() -> EvalReport:
                    value=determinism_rate, target_text="100%", passed=determinism_rate >= 1.0, unit="fraction"),
         EvalMetric(key="side_effect_containment", label="Side-effects Executed on Replay",
                    value=total_side_effects, target_text="0", passed=total_side_effects == 0, unit="count"),
+        EvalMetric(key="side_effecting_intercepted", label="Side-effecting Calls Intercepted",
+                   value=side_effecting_intercepted, target_text="-", passed=None, unit="count"),
         EvalMetric(key="avg_steps", label="Avg Steps / Run",
                    value=round(avg_steps, 1), target_text="-", passed=None, unit="count"),
     ]
+
+    # Append quality metrics from the harness (semantic-match P/R, root-cause
+    # accuracy, AI reliability) that are not derivable from the run store.
+    live_keys = {m.key for m in metrics}
+    metrics.extend(m for m in harness_metrics if m.key not in live_keys)
+
     caveats = [
-        "Metrics are computed live from the recorded runs in the store, replayed "
+        "Live metrics are computed from the recorded runs in the store, replayed "
         "through the real divergence engine (forks excluded).",
         "Side-effect containment is the count of real side effects executed during "
         "replay; the core safety invariant keeps it at 0.",
+        "Semantic-match, root-cause, and AI-reliability metrics come from the "
+        "evaluation harness (eval/) over the synthetic test set.",
     ]
     return EvalReport(
         available=True,
         generated_at=datetime.now(timezone.utc).isoformat(),
         metrics=metrics,
         caveats=caveats,
+        reliability_checks=reliability_checks,
     )
 
 

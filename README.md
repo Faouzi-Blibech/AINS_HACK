@@ -183,7 +183,11 @@ The whole loop (detect, locate, fix, verify) completes without touching producti
 | Semantic-match P/R | Precision/recall of the semantic matcher vs. human-labeled equivalences | > 0.85 |
 | Root-cause accuracy | % of injected failures where the blame graph identifies the correct root cause | > 0.75 |
 
-Run against a synthetic test set of injected failures (see [`eval/`](eval/)).
+Run against a synthetic test set of injected failures (see [`eval/`](eval/)). Full
+metrics, test protocol, results, and caveats are in the
+[evaluation report](docs/evaluation_report.md). Sources, formats, key fields,
+quality notes, and sensitivity handling are in the
+[data description](docs/data_description.md).
 
 ---
 
@@ -211,6 +215,8 @@ AINS_HACK/
 │   ├── images/                ← architecture & flow diagrams
 │   ├── architecture.md        ← component-by-component breakdown
 │   ├── trace_schema.json      ← the trace contract (shared by all modules)
+│   ├── data_description.md    ← sources, formats, key fields, quality, sensitivity
+│   ├── evaluation_report.md   ← metrics, test protocol, results, caveats
 │   └── demo_scenario.md       ← the 5-minute end-to-end demo script
 ├── agent/                     ← toy Jira-triage agent under test
 ├── recorder/                  ← interception layer (HTTP / MCP / SDK)

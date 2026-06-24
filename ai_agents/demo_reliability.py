@@ -499,6 +499,22 @@ def main() -> None:
     print("-" * 55)
     print(f"demo-critical reliability: {sum_correct}/{sum_effective}")
 
+    # Persist for the Evaluation page (api reads eval/reliability.json). Skipped
+    # cleanly when no LLM key was configured (nothing meaningful was measured).
+    if sum_effective > 0:
+        rate = sum_correct / sum_effective
+        out_path = _REPO_ROOT / "eval" / "reliability.json"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "rate": rate,
+            "correct": sum_correct,
+            "effective": sum_effective,
+            "checks": results,
+        }
+        out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(f"Reliability written to: {out_path}")
+
 
 if __name__ == "__main__":
     main()

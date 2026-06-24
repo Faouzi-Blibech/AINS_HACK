@@ -1,0 +1,40 @@
+{
+  "generated_at": "2026-06-24T15:02:03Z",
+  "rate": 1.0,
+  "correct": 19,
+  "effective": 19,
+  "checks": [
+    {
+      "check": "debug_agent",
+      "correct": 5,
+      "total": 5,
+      "errored": 0,
+      "rate": 1.0,
+      "notes": "all correct"
+    },
+    {
+      "check": "blame_verdict",
+      "correct": 5,
+      "total": 5,
+      "errored": 0,
+      "rate": 1.0,
+      "notes": "all correct"
+    },
+    {
+      "check": "counterfactual",
+      "correct": 4,
+      "total": 5,
+      "errored": 1,
+      "rate": 1.0,
+      "notes": "run 5 rate-limited/errored (excluded); 1 run(s) rate-limited/errored, excluded"
+    },
+    {
+      "check": "semantic_matcher",
+      "correct": 5,
+      "total": 5,
+      "errored": 0,
+      "rate": 1.0,
+      "notes": "all correct"
+    }
+  ]
+}
