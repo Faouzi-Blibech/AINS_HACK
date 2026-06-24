@@ -30,37 +30,7 @@ function TransportControls({ isPlaying, onPlay, onOver, overActive }) {
         padding: 6,
       }}
     >
-      {/* REC */}
-      <button
-        onClick={() => setIsRec((v) => !v)}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          padding: "7px 12px",
-          borderRadius: 9,
-          border: "none",
-          background: isRec ? "var(--fail-dim)" : "transparent",
-          color: isRec ? "var(--rec)" : "var(--fg2)",
-          font: "600 11px var(--mono)",
-          letterSpacing: ".05em",
-          cursor: "pointer",
-          transition: "background 0.12s, color 0.12s",
-        }}
-      >
-        <span
-          style={{
-            width: 7,
-            height: 7,
-            borderRadius: "50%",
-            background: isRec ? "var(--rec)" : "var(--fg2)",
-            display: "block",
-            animation: isRec ? "recpulse 1s ease-in-out infinite" : "none",
-            flex: "none",
-          }}
-        />
-        REC
-      </button>
+
 
       {/* PLAY */}
       <button
@@ -84,33 +54,6 @@ function TransportControls({ isPlaying, onPlay, onOver, overActive }) {
           <path d="M3 2l7 4-7 4z" fill="currentColor" />
         </svg>
         {isPlaying ? "STOP" : "PLAY"}
-      </button>
-
-      {/* OVER -- record-over: open the Divergence tab to inject + fork */}
-      <button
-        onClick={onOver}
-        title="Record-over: replay to a step, inject a change, and fork the trajectory (opens the Divergence tab)"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 5,
-          padding: "7px 12px",
-          borderRadius: 9,
-          border: "none",
-          background: overActive ? "var(--accent-dim)" : "transparent",
-          color: overActive ? "var(--accent)" : "var(--fg2)",
-          font: "600 11px var(--mono)",
-          letterSpacing: ".05em",
-          cursor: "pointer",
-          transition: "background 0.12s, color 0.12s",
-        }}
-        onMouseEnter={(e) => { if (!overActive) { e.currentTarget.style.background = "var(--hover)"; e.currentTarget.style.color = "var(--fg0)"; } }}
-        onMouseLeave={(e) => { if (!overActive) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--fg2)"; } }}
-      >
-        <svg width="13" height="13" viewBox="0 0 16 16" style={{ marginRight: 2 }}>
-          <path d="M5 3v6a3 3 0 003 3h3M11 9l3 3-3 3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-        OVER
       </button>
     </div>
   );
@@ -403,66 +346,7 @@ export default function RunInspector() {
           <TransportControls isPlaying={isPlaying} onPlay={handlePlayToggle} onOver={handleOver} overActive={overActive} />
         </div>
 
-        {/* Root-cause pill */}
-        {blame?.root_cause_step_id != null && (
-          <button
-            onClick={scrollToRootCause}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "8px 14px",
-              borderRadius: 10,
-              border: "1px solid var(--root)",
-              background: "var(--fail-dim)",
-              color: "var(--root)",
-              font: "600 11px var(--mono)",
-              letterSpacing: ".04em",
-              cursor: "pointer",
-              transition: "background 0.12s",
-            }}
-          >
-            <svg width="13" height="13" viewBox="0 0 16 16">
-              <path d="M8 1.5l6 11H2z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-              <path d="M8 6v3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-              <circle cx="8" cy="11" r=".9" fill="currentColor" />
-            </svg>
-            Root-cause
-          </button>
-        )}
 
-        {/* Preventive-warning badge -- shown when a failure-memory match exists */}
-        {memoryEntry && (
-          <button
-            onClick={() => {
-              // Scroll to the MemoryBanner (same pattern as scrollToRootCause)
-              rootCauseRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-            }}
-            title="A preventive warning was injected because this run matched a known failure pattern"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "8px 14px",
-              borderRadius: 10,
-              border: "1px solid var(--warn)",
-              background: "var(--warn-dim)",
-              color: "var(--warn)",
-              font: "700 10px var(--mono)",
-              letterSpacing: ".06em",
-              cursor: "pointer",
-              transition: "background 0.12s",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {/* Shield icon */}
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M8 1.5L2 4v4c0 3.3 2.5 6.2 6 7 3.5-.8 6-3.7 6-7V4z" />
-              <path d="M5.5 8l2 2 3-3" />
-            </svg>
-            PREVENTIVE WARNING INJECTED
-          </button>
-        )}
       </div>
 
       {/* ===== SIDE-EFFECTS-CONTAINED BANNER ===== */}
