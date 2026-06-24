@@ -16,8 +16,18 @@ import os
 import time
 from functools import wraps
 
+from recorder.capture import heuristic_confidence
 from recorder.session import current_session
 from trace_store.blob_store import store_blob
+
+
+def _tool_status(result) -> str:
+    """A tool result signals failure when it returns a dict with an ``error`` key
+    or ``ok: False`` -- that step is recorded as status=error so the trace flags
+    the failure and the blame graph can attribute it."""
+    if isinstance(result, dict) and (result.get("error") is not None or result.get("ok") is False):
+        return "error"
+    return "ok"
 
 
 def _bind(fn, args, kwargs) -> dict:
@@ -47,7 +57,8 @@ def record_tool(side_effecting: bool = False):
                 sess.record_sdk(tool=tool, args=bound, result=result,
                                 side_effecting=side_effecting,
                                 latency_ms=int((time.time() - t0) * 1000),
-                                ts_ms=int(t0 * 1000))
+                                ts_ms=int(t0 * 1000),
+                                status=_tool_status(result))
                 return result
             return awrapper
 
@@ -64,7 +75,8 @@ def record_tool(side_effecting: bool = False):
             sess.record_sdk(tool=tool, args=bound, result=result,
                             side_effecting=side_effecting,
                             latency_ms=int((time.time() - t0) * 1000),
-                            ts_ms=int(t0 * 1000))
+                            ts_ms=int(t0 * 1000),
+                            status=_tool_status(result))
             return result
         return wrapper
     return decorator
@@ -118,7 +130,9 @@ def record_llm(fn):
             "latency_ms": latency_ms,
             "status": "ok",
             "side_effecting": False,
-            "confidence": None,
+            "confidence": heuristic_confidence(
+                step_type="llm_call", has_content=bool(isinstance(result, dict) and result.get("content"))
+            ),
             "causal_parents": causal_parents,
             "model": model,
             "prompt_blob": store_blob(prompt_text),
