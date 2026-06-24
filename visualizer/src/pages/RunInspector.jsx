@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getTrace, getBlame, getLibrary, getStep } from "../api/client.js";
+import { getTrace, getBlame, getLibrary, getStep, getRunMemory } from "../api/client.js";
 import { getMetrics } from "../api/client.js";
 import TapeStrip from "../components/TapeStrip.jsx";
 import MemoryBanner from "../components/MemoryBanner.jsx";
@@ -64,6 +64,7 @@ export default function RunInspector() {
   const [trace, setTrace] = useState(null);
   const [blame, setBlame] = useState(null);
   const [library, setLibrary] = useState(null);
+  const [memory, setMemory] = useState(null);
   const [metrics, setMetrics] = useState(null);
   const [selectedStepId, setSelectedStepId] = useState(null);
   const [resolvedStep, setResolvedStep] = useState(null);
@@ -85,6 +86,7 @@ export default function RunInspector() {
     setTrace(null);
     setBlame(null);
     setLibrary(null);
+    setMemory(null);
     setResolvedStep(null);
 
     Promise.all([
@@ -92,13 +94,15 @@ export default function RunInspector() {
       getBlame(effectiveRunId).catch(() => null),
       getLibrary().catch(() => null),
       getMetrics().catch(() => null),
+      getRunMemory(effectiveRunId).catch(() => null),
     ])
-      .then(([traceData, blameData, libraryData, metricsData]) => {
+      .then(([traceData, blameData, libraryData, metricsData, memoryData]) => {
         if (cancelled) return;
         setTrace(traceData);
         setBlame(blameData);
         setLibrary(libraryData);
         setMetrics(metricsData);
+        setMemory(memoryData);
 
         // Default selection: blame root_cause_step_id, else step 1
         const defaultStep =
@@ -167,20 +171,14 @@ export default function RunInspector() {
     dockRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  // Memory match: only a real match -- library entry whose blame_step equals blame.root_cause_step_id.
-  // Returns null when no match exists so the badge and banner never appear for unmatched runs.
-  const memoryEntry = (() => {
-    if (!library?.entries?.length) return null;
-    const rootStep = blame?.root_cause_step_id;
-    if (rootStep == null) return null;
-    const match = library.entries.find((e) => e.blame_step === rootStep);
-    if (!match) return null;
-    return { entry: match, idx: library.entries.indexOf(match) };
-  })();
-
-  const memoryLabel = memoryEntry
-    ? memoryEntry.entry.id ?? "FM-" + String(memoryEntry.idx + 1).padStart(3, "0")
+  // Memory match: semantic recall from /runs/{id}/memory -- the AI ranks prior
+  // failures by meaning (not by step number) and we surface the top match only
+  // when it clears the relevance threshold (memory.available).
+  const memoryTop = memory?.available && memory.matches?.length ? memory.matches[0] : null;
+  const memoryEntry = memoryTop
+    ? { entry: memoryTop, score: memoryTop.score, rationale: memory.rationale }
     : null;
+  const memoryLabel = memoryTop ? `FM-${memoryTop.id}` : null;
 
   if (loading) {
     return (
@@ -362,7 +360,12 @@ export default function RunInspector() {
 
       {/* ===== FAILURE-MEMORY BANNER ===== */}
       {memoryEntry && (
-        <MemoryBanner entry={memoryEntry.entry} label={memoryLabel} />
+        <MemoryBanner
+          entry={memoryEntry.entry}
+          label={memoryLabel}
+          score={memoryEntry.score}
+          rationale={memoryEntry.rationale}
+        />
       )}
 
       {/* ===== ROOT-CAUSE PANEL ===== */}

@@ -33,8 +33,9 @@ from api.seed import seed_store, seed_failure_library
 from api.upload import materialize_upload, UploadError
 from trace_store import TraceStore, FailureLibraryStore
 from trace_store.blob_store import fetch_blob
-from ai_agents.root_cause import analyze, ScriptedReplay
+from ai_agents.root_cause import analyze, ScriptedReplay, infer_failed_step, causal_ancestors
 from ai_agents.trace_content import make_resolver
+from ai_agents.failure_library import relevant_failures, FailureEntry
 import ai_agents.debug_agent as _debug_agent
 import ai_agents.counterfactual as _counterfactual
 import ai_agents.llm as _llm
@@ -209,6 +210,24 @@ class EvalReport(BaseModel):
     metrics: list[EvalMetric] = []
     caveats: list[str] = []
     reliability_checks: list[ReliabilityCheck] = []
+
+
+class MemoryMatch(BaseModel):
+    id: str
+    failure_pattern: str
+    fix_that_worked: str
+    blame_step: int
+    agent_config: Optional[str] = None
+    determinism_rate: Optional[float] = None
+    score: float            # 0..1 semantic relevance to this run
+
+
+class MemoryMatchResponse(BaseModel):
+    available: bool         # True when the top match clears the threshold
+    situation: str          # how this run failed (the query that was matched)
+    confidence: float
+    rationale: str
+    matches: list[MemoryMatch] = []
 
 
 # ---------------------------------------------------------------------------
@@ -603,6 +622,175 @@ def query_failure_library(
 
     parsed = [FailureLibraryEntry(**e) for e in formatted]
     return FailureLibraryResponse(entries=parsed, total=len(parsed))
+
+
+# ---------------------------------------------------------------------------
+# Semantic failure-memory recall (Layer 2): match a run to prior failures by
+# meaning, not by step number.
+# ---------------------------------------------------------------------------
+
+# A match must clear this relevance score for the UI to surface a warning, so a
+# weak coincidence does not fire the banner.
+_MEMORY_MATCH_THRESHOLD = float(os.environ.get("CASSETTE_MEMORY_THRESHOLD", "0.45"))
+
+
+class _SqliteFailureLibrary:
+    """Adapt the SQLite failure store to the FailureLibrary protocol so the
+    semantic ranker (ai_agents.failure_library.relevant_failures) can score it."""
+
+    def __init__(self, store) -> None:
+        self._store = store
+
+    def all(self) -> list[FailureEntry]:
+        out: list[FailureEntry] = []
+        for r in self._store.get_all(limit=200):
+            d = dict(r)
+            out.append(FailureEntry(
+                id=str(d.get("id")),
+                failure_pattern=d.get("failure_pattern", ""),
+                blame_step=int(d.get("blame_step") or 0),
+                fix_that_worked=d.get("fix_that_worked", ""),
+                agent_config=d.get("agent_config") or "unknown",
+                determinism_rate=float(d.get("determinism_rate") or 0.0),
+            ))
+        return out
+
+
+def _situation_for_run(doc: dict) -> str:
+    """Build a short natural-language description of how a run failed, used as
+    the query the semantic matcher scores library patterns against.
+
+    Pulls the agent, the failed step, and the resolved content of the failed and
+    root-cause steps (so the match is on meaning, not step index)."""
+    agent = doc.get("agent") or "agent"
+    steps = {s["step_id"]: s for s in doc.get("steps", [])}
+    resolver = make_resolver(os.environ["CASSETTE_BLOB_DIR"])
+    failed_id = infer_failed_step(doc)
+
+    # Lead with the blame-identified root cause (the actual mechanism), not the
+    # visible failure site, so the matcher scores on why it failed rather than on
+    # the surface symptom.
+    root = None
+    try:
+        graph = analyze(
+            doc,
+            replay=ScriptedReplay(doc, resolves_at_for(doc.get("run_id", ""), doc)),
+            content_resolver=resolver,
+        )
+        root = graph.root_cause_step_id
+    except Exception:
+        root = None
+
+    parts = [f"agent {agent} run failed"]
+    if root is not None and root in steps:
+        tool = steps[root].get("tool") or steps[root].get("type")
+        parts.append(f"root cause is step {root} ({tool}): {resolver(steps[root])}")
+    if failed_id is not None and failed_id in steps and failed_id != root:
+        parts.append(f"visible failure at step {failed_id}: {resolver(steps[failed_id])}")
+    # No single root identified: fall back to the failure's causal chain so the
+    # upstream signal is still present for the matcher.
+    if root is None and failed_id is not None:
+        for sid in causal_ancestors(doc, failed_id):
+            if sid in steps:
+                parts.append(f"step {sid}: {resolver(steps[sid])}")
+
+    return "; ".join(parts)[:1400]
+
+
+_FAILURE_SUMMARY_SYSTEM = (
+    "You read an AI agent's failed run and state, in ONE sentence, the root-cause "
+    "failure. Name the specific field, tool, or decision that was wrong and the "
+    "incorrect outcome it caused (for example: 'an ambiguous priority field caused "
+    "a high-impact ticket to be routed as routine'). Describe the mechanism, not "
+    "specific IDs or values. No preamble."
+)
+
+
+def _failure_description(doc: dict) -> str:
+    """Turn a failed run into a one-sentence failure description for matching.
+
+    Raw step data ('priority: medium') does not match curated failure patterns
+    well, so the LLM first articulates the failure mechanism in plain language;
+    that description is what the semantic recall scores against. Falls back to the
+    root-cause-led raw situation when no LLM is configured."""
+    raw = _situation_for_run(doc)
+    try:
+        out = _llm.llm_complete(
+            system=_FAILURE_SUMMARY_SYSTEM,
+            user=f"Failed run details:\n{raw}\n\nOne-sentence root-cause failure pattern:",
+            model=_llm.cheap_model(),
+        )
+        desc = (out or "").strip().strip('"').strip()
+        if desc:
+            return desc
+    except Exception:
+        pass
+    return raw
+
+
+@app.get("/runs/{run_id}/memory", response_model=MemoryMatchResponse, tags=["library"])
+def get_run_memory(run_id: str) -> MemoryMatchResponse:
+    """Semantically recall prior failures similar to this run.
+
+    Unlike the old exact-blame-step match, this builds a description of how the
+    run failed and ranks the failure library by meaning via the LLM relevance
+    judge (with an offline keyword fallback), returning matches with a score and
+    rationale. This is the 'structural intelligence beyond retrieval' path.
+    """
+    try:
+        doc = store.get_run(run_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="run not found")
+
+    # Only meaningful for runs that actually failed.
+    if doc.get("status") not in _FAILED_STATES and infer_failed_step(doc) is None:
+        return MemoryMatchResponse(available=False, situation="", confidence=0.0,
+                                   rationale="Run did not fail; no recall needed.", matches=[])
+
+    situation = _failure_description(doc)
+    matches, conf, rationale = _rank_library(situation, k=3)
+    top = matches[0].score if matches else 0.0
+    return MemoryMatchResponse(
+        available=bool(matches) and top >= _MEMORY_MATCH_THRESHOLD,
+        situation=situation, confidence=conf, rationale=rationale, matches=matches,
+    )
+
+
+def _rank_library(situation: str, *, k: int) -> tuple[list[MemoryMatch], float, str]:
+    """Rank the failure library against a free-text situation, semantically.
+
+    Returns (matches sorted by score desc, confidence, rationale)."""
+    library = _SqliteFailureLibrary(failure_store)
+    result = relevant_failures(library, situation, k=k)
+    matches = [
+        MemoryMatch(
+            id=entry.id,
+            failure_pattern=entry.failure_pattern,
+            fix_that_worked=entry.fix_that_worked,
+            blame_step=entry.blame_step,
+            agent_config=entry.agent_config,
+            determinism_rate=entry.determinism_rate,
+            score=round(score, 3),
+        )
+        for entry, score in result.value
+    ]
+    return matches, result.confidence, result.rationale
+
+
+@app.get("/library/search", response_model=MemoryMatchResponse, tags=["library"])
+def search_failure_library(
+    q: str = Query(..., description="Free-text failure or situation to recall similar patterns for."),
+) -> MemoryMatchResponse:
+    """Semantically recall library failures most similar to a free-text query.
+
+    Powers the Failure Memory page's recall box: the AI ranks every stored
+    pattern by meaning (not substring match) and returns scores + a rationale.
+    """
+    matches, conf, rationale = _rank_library(q, k=5)
+    return MemoryMatchResponse(
+        available=bool(matches), situation=q, confidence=conf,
+        rationale=rationale, matches=matches,
+    )
 
 
 @app.get("/metrics", response_model=MetricsResponse, tags=["metrics"])

@@ -1,13 +1,19 @@
-// MemoryBanner -- amber banner shown when the current run matched a failure-memory pattern.
+// MemoryBanner -- amber banner shown when a run semantically matches a prior
+// failure pattern (from /runs/{id}/memory). The match is by meaning, ranked by
+// the AI, not by step number.
 // Props:
-//   entry  -- FailureLibraryEntry object (or null/undefined to hide)
-//   label  -- display id, e.g. "FM-014"
+//   entry     -- MemoryMatch { id, failure_pattern, fix_that_worked, blame_step, score }
+//   label     -- display id, e.g. "FM-014"
+//   score     -- 0..1 relevance score
+//   rationale -- one-line explanation of why it matched
 
-export default function MemoryBanner({ entry, label }) {
+export default function MemoryBanner({ entry, label, score, rationale }) {
   if (!entry) return null;
 
   const displayLabel = label ?? "FM-000";
-  const warningText = entry.fix_that_worked ?? entry.failure_pattern ?? "";
+  const pattern = entry.failure_pattern ?? "";
+  const fix = entry.fix_that_worked ?? "";
+  const pct = score != null ? Math.round(score * 100) + "%" : null;
 
   return (
     <div
@@ -18,7 +24,7 @@ export default function MemoryBanner({ entry, label }) {
         background: "var(--warn-dim)",
         borderRadius: 14,
         display: "flex",
-        alignItems: "center",
+        alignItems: "flex-start",
         gap: 13,
         animation: "fadeup .3s ease",
       }}
@@ -33,22 +39,40 @@ export default function MemoryBanner({ entry, label }) {
           padding: "3px 7px",
           flex: "none",
           whiteSpace: "nowrap",
+          marginTop: 1,
         }}
       >
         MEMORY
       </span>
-      <div style={{ font: "450 12.5px var(--ui)", color: "var(--fg0)", lineHeight: 1.5 }}>
-        This run matched failure pattern{" "}
-        <b style={{ fontWeight: 600 }}>{displayLabel}</b>. Cassette injected a preventive warning:{" "}
-        <span
-          style={{
-            fontFamily: "var(--mono)",
-            fontSize: 11,
-            color: "var(--warn)",
-          }}
-        >
-          &ldquo;{warningText}&rdquo;
-        </span>
+      <div style={{ font: "450 12.5px var(--ui)", color: "var(--fg0)", lineHeight: 1.55 }}>
+        Cassette has seen a similar failure before:{" "}
+        <b style={{ fontWeight: 600 }}>{displayLabel}</b>
+        {pct && (
+          <span
+            style={{
+              font: "600 10px var(--mono)",
+              color: "var(--warn)",
+              marginLeft: 6,
+            }}
+          >
+            {pct} match
+          </span>
+        )}
+        .{" "}
+        <span style={{ color: "var(--fg1)" }}>{pattern}</span>
+        <div style={{ marginTop: 4 }}>
+          <span style={{ font: "600 10px var(--mono)", color: "var(--fg2)", letterSpacing: ".06em" }}>
+            FIX THAT WORKED:{" "}
+          </span>
+          <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--warn)" }}>
+            {fix}
+          </span>
+        </div>
+        {rationale && (
+          <div style={{ marginTop: 4, font: "450 11px var(--ui)", color: "var(--fg2)" }}>
+            {rationale}
+          </div>
+        )}
       </div>
     </div>
   );

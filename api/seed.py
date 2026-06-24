@@ -140,16 +140,23 @@ def seed_failure_library(failure_store: Any) -> None:
     """
     from api.failure_memory import FAILURE_MEMORY
 
-    existing = failure_store.get_all(limit=1)
-    if not existing:
-        for entry in FAILURE_MEMORY:
-            failure_store.write_entry(
-                failure_pattern=entry["failure_pattern"],
-                blame_step=entry["blame_step"],
-                fix_that_worked=entry["fix_that_worked"],
-                agent_config=entry.get("agent_config"),
-                determinism_rate=entry.get("determinism_rate"),
-            )
+    # Additive + idempotent: add any seed pattern not already stored, so an
+    # existing DB picks up newly added patterns on the next startup without a
+    # full reset (matched by failure_pattern text).
+    try:
+        existing_patterns = {e.get("failure_pattern") for e in failure_store.get_all(limit=500)}
+    except Exception:
+        existing_patterns = set()
+    for entry in FAILURE_MEMORY:
+        if entry["failure_pattern"] in existing_patterns:
+            continue
+        failure_store.write_entry(
+            failure_pattern=entry["failure_pattern"],
+            blame_step=entry["blame_step"],
+            fix_that_worked=entry["fix_that_worked"],
+            agent_config=entry.get("agent_config"),
+            determinism_rate=entry.get("determinism_rate"),
+        )
 
 
 if __name__ == "__main__":

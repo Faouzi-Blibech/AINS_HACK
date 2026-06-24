@@ -51,6 +51,16 @@ export function getLibrary(q) {
   return _get(`/library${qs}`);
 }
 
+/** Semantic failure-memory recall for a run (matches by meaning, with scores). */
+export function getRunMemory(runId) {
+  return _get(`/runs/${encodeURIComponent(runId)}/memory`);
+}
+
+/** Semantic recall: rank the failure library against a free-text situation. */
+export function searchLibrary(q) {
+  return _get(`/library/search?q=${encodeURIComponent(q)}`);
+}
+
 /** Return top-level metric cards. */
 export function getMetrics() {
   return _get("/metrics");
