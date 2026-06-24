@@ -75,6 +75,14 @@ async function _post(path, body) {
   return res.json();
 }
 
+async function _postForm(path, formData) {
+  const res = await fetch(`${BASE}${path}`, { method: "POST", body: formData });
+  if (!res.ok) {
+    throw new Error(await _extractDetail(res, path));
+  }
+  return res.json();
+}
+
 /** POST /runs/{run_id}/inject  ->  {available, injection?, confidence?, rationale?} | {available:false, detail} */
 export function postInject(runId, instruction) {
   return _post(`/runs/${encodeURIComponent(runId)}/inject`, { instruction });
@@ -108,4 +116,9 @@ export function getConnectInfo() {
 /** POST /agents/import  ->  {run_id, status, steps} */
 export function postAgentImport(body) {
   return _post("/agents/import", body);
+}
+
+/** POST /agents/import/upload (multipart) -> {run_id, status, steps} */
+export function postAgentImportUpload(formData) {
+  return _postForm("/agents/import/upload", formData);
 }

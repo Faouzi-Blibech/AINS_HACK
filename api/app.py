@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any, List, Optional, Union
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -30,6 +30,7 @@ from api_contract_sketch import (
     Trace,
 )
 from api.seed import seed_store, seed_failure_library
+from api.upload import materialize_upload, UploadError
 from trace_store import TraceStore, FailureLibraryStore
 from trace_store.blob_store import fetch_blob
 from ai_agents.root_cause import analyze, ScriptedReplay
@@ -1162,6 +1163,22 @@ def agents_run(body: AgentRunRequest) -> AgentRunResponse:
     return AgentRunResponse(run_id=run_id, status="ok", steps=steps)
 
 
+def _finalize_import(run_id: str, proc, secret: str, source_label: str) -> "AgentImportResponse":
+    """Count captured steps; raise 502 (scrubbed) on a zero-step non-zero exit."""
+    try:
+        run = store.get_run(run_id)
+        steps = len(run.get("steps", []))
+    except KeyError:
+        steps = 0
+    if steps == 0 and proc.returncode != 0:
+        combined = (proc.stderr or "") + (proc.stdout or "")
+        scrubbed = _scrub_subprocess_output(combined, secret, source_label)
+        detail = scrubbed or f"Import runner exited with code {proc.returncode}."
+        print(f"[agents/import] runner failed (code {proc.returncode}):\n{detail}")
+        raise HTTPException(status_code=502, detail=detail)
+    return AgentImportResponse(run_id=run_id, status="ok", steps=steps)
+
+
 @app.post("/agents/import", response_model=AgentImportResponse, tags=["agents"])
 def agents_import(body: AgentImportRequest) -> AgentImportResponse:
     """Import an external agent (git URL or local path), run it in a container, record it."""
@@ -1187,26 +1204,50 @@ def agents_import(body: AgentImportRequest) -> AgentImportResponse:
             detail=f"Import exceeded {_AGENT_RUN_TIMEOUT}s; raise CASSETTE_AGENT_RUN_TIMEOUT.",
         )
 
-    # Count captured steps first. An interactive agent often exits non-zero after
-    # doing its work (e.g. EOFError once stdin closes), but the calls it made
-    # before that are already recorded, so a trace with steps is still a success.
+    secret = " ".join((body.env or {}).values())
+    return _finalize_import(run_id, proc, secret, body.source)
+
+
+@app.post("/agents/import/upload", response_model=AgentImportResponse, tags=["agents"])
+def agents_import_upload(
+    files: list[UploadFile] = File(...),
+    command: Optional[str] = Form(None),
+    task: Optional[str] = Form(None),
+    env: Optional[str] = Form(None),
+) -> AgentImportResponse:
+    """Import a locally uploaded agent (file tree or single zip), run it, record it."""
+    run_id = f"import-{uuid.uuid4().hex[:8]}"
+
+    env_dict: Optional[dict[str, str]] = None
+    if env:
+        try:
+            parsed = json.loads(env)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=422, detail="env must be a JSON object")
+        if not isinstance(parsed, dict):
+            raise HTTPException(status_code=422, detail="env must be a JSON object")
+        env_dict = {str(k): str(v) for k, v in parsed.items()}
+
+    items = [(f.filename or "", f.file.read()) for f in files]
+    dest_root = str(Path(DB_PATH).resolve().parent / "imports")
     try:
-        run = store.get_run(run_id)
-        steps = len(run.get("steps", []))
-    except KeyError:
-        steps = 0
+        workspace = materialize_upload(items, dest_root)
+    except UploadError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
-    if steps == 0 and proc.returncode != 0:
-        combined = (proc.stderr or "") + (proc.stdout or "")
-        secret = " ".join((body.env or {}).values())
-        scrubbed = _scrub_subprocess_output(combined, secret, body.source)
-        detail = scrubbed or f"Import runner exited with code {proc.returncode}."
-        # Log the actual agent error to the API logs (docker compose logs) so it
-        # is visible without digging into the HTTP response.
-        print(f"[agents/import] runner failed (code {proc.returncode}):\n{detail}")
-        raise HTTPException(status_code=502, detail=detail)
+    try:
+        proc = _launch_import_run(
+            run_id=run_id, source=workspace, ref=None, subdir=None,
+            command=command, env=env_dict, task=task,
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(
+            status_code=504,
+            detail=f"Import exceeded {_AGENT_RUN_TIMEOUT}s; raise CASSETTE_AGENT_RUN_TIMEOUT.",
+        )
 
-    return AgentImportResponse(run_id=run_id, status="ok", steps=steps)
+    secret = " ".join((env_dict or {}).values())
+    return _finalize_import(run_id, proc, secret, "uploaded-agent")
 
 
 @app.get("/agents/connect-info", response_model=ConnectInfo, tags=["agents"])

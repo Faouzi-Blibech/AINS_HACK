@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { postAgentRun, postAgentImport } from "../api/client.js";
+import { postAgentRun, postAgentImport, postAgentImportUpload } from "../api/client.js";
 
 // Provider presets matching the backend _PROVIDER_PRESETS
 const PRESETS = {
@@ -351,6 +351,18 @@ function QuickTestPanel() {
 // Panel B: Import agent
 // ---------------------------------------------------------------------------
 
+const SKIP_SEGMENTS = new Set([
+  "node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build", ".next",
+]);
+const MAX_UPLOAD_FILE = 5 * 1024 * 1024; // 5 MB per file (client skip)
+
+function keepUploadFile(f) {
+  const rel = f.webkitRelativePath || f.name;
+  if (rel.split("/").some((s) => SKIP_SEGMENTS.has(s))) return false;
+  if (f.size > MAX_UPLOAD_FILE) return false;
+  return true;
+}
+
 function ImportPanel() {
   const navigate = useNavigate();
   const [source, setSource] = useState("");
@@ -361,30 +373,52 @@ function ImportPanel() {
   const [extraEnv, setExtraEnv] = useState("");
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
+  const [mode, setMode] = useState("path"); // "path" | "upload"
+  const [files, setFiles] = useState([]);
+
+  function buildEnv() {
+    const env = {};
+    if (apiKey.trim()) env.OPENAI_API_KEY = apiKey.trim();
+    extraEnv.split("\n").forEach((line) => {
+      const i = line.indexOf("=");
+      if (i > 0) {
+        const k = line.slice(0, i).trim();
+        const v = line.slice(i + 1).trim();
+        if (k) env[k] = v;
+      }
+    });
+    return env;
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError(null);
     setRunning(true);
     try {
-      const body = { source };
-      if (ref.trim()) body.ref = ref.trim();
-      if (command.trim()) body.command = command.trim();
-      if (task.trim()) body.task = task.trim();
-      const env = {};
-      if (apiKey.trim()) env.OPENAI_API_KEY = apiKey.trim();
-      // Parse extra "KEY=VALUE" lines (e.g. WEATHER_API_KEY=...) for agents that
-      // need more than one key.
-      extraEnv.split("\n").forEach((line) => {
-        const i = line.indexOf("=");
-        if (i > 0) {
-          const k = line.slice(0, i).trim();
-          const v = line.slice(i + 1).trim();
-          if (k) env[k] = v;
+      const env = buildEnv();
+      let result;
+      if (mode === "upload") {
+        const kept = files.filter(keepUploadFile);
+        if (!kept.length) throw new Error("Select a folder with at least one file to upload.");
+        const fd = new FormData();
+        for (const f of kept) {
+          const rel = f.webkitRelativePath || f.name;
+          // Strip the top-level folder so the workspace root is the agent root.
+          const inner = rel.includes("/") ? rel.split("/").slice(1).join("/") : rel;
+          fd.append("files", f, inner || f.name);
         }
-      });
-      if (Object.keys(env).length) body.env = env;
-      const result = await postAgentImport(body);
+        if (command.trim()) fd.append("command", command.trim());
+        if (task.trim()) fd.append("task", task.trim());
+        if (Object.keys(env).length) fd.append("env", JSON.stringify(env));
+        result = await postAgentImportUpload(fd);
+      } else {
+        const body = { source };
+        if (ref.trim()) body.ref = ref.trim();
+        if (command.trim()) body.command = command.trim();
+        if (task.trim()) body.task = task.trim();
+        if (Object.keys(env).length) body.env = env;
+        result = await postAgentImport(body);
+      }
       navigate(`/runs/${result.run_id}`);
     } catch (err) {
       const raw = err.message ?? "Import failed.";
@@ -420,20 +454,78 @@ function ImportPanel() {
       </p>
 
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <div>
-          <FieldLabel htmlFor="src">Repo URL or local path</FieldLabel>
-          <TextInput
-            id="src"
-            value={source}
-            onChange={(e) => setSource(e.target.value)}
-            placeholder="https://github.com/you/agent.git  or  /path/to/agent"
-          />
+        <div style={{ display: "flex", gap: 8 }}>
+          {["path", "upload"].map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => { setMode(m); setError(null); }}
+              style={{
+                flex: 1,
+                background: mode === m ? "var(--accent)" : "var(--bg2)",
+                color: mode === m ? "var(--bg0)" : "var(--fg2)",
+                border: "1px solid var(--bd2)",
+                borderRadius: 9,
+                padding: "8px 10px",
+                font: "600 12px var(--ui)",
+                cursor: "pointer",
+              }}
+            >
+              {m === "path" ? "Git URL / path" : "Upload folder"}
+            </button>
+          ))}
         </div>
 
-        <div>
-          <FieldLabel htmlFor="ref">Branch / ref (optional)</FieldLabel>
-          <TextInput id="ref" value={ref} onChange={(e) => setRef(e.target.value)} placeholder="leave blank for the default branch" />
-        </div>
+        {mode === "path" ? (
+          <>
+            <div>
+              <FieldLabel htmlFor="src">Repo URL or local path</FieldLabel>
+              <TextInput
+                id="src"
+                value={source}
+                onChange={(e) => setSource(e.target.value)}
+                placeholder="https://github.com/you/agent.git  or  /path/to/agent"
+              />
+            </div>
+            <div>
+              <FieldLabel htmlFor="ref">Branch / ref (optional)</FieldLabel>
+              <TextInput id="ref" value={ref} onChange={(e) => setRef(e.target.value)} placeholder="leave blank for the default branch" />
+            </div>
+          </>
+        ) : (
+          <div>
+            <FieldLabel htmlFor="folder">Agent folder</FieldLabel>
+            <label
+              htmlFor="folder"
+              style={{
+                display: "inline-block",
+                cursor: "pointer",
+                background: "var(--bg2)",
+                border: "1px solid var(--bd2)",
+                borderRadius: 9,
+                padding: "9px 14px",
+                font: "600 12px var(--ui)",
+                color: "var(--fg1)",
+              }}
+            >
+              {files.length ? "Change folder…" : "Browse folder…"}
+            </label>
+            <input
+              id="folder"
+              type="file"
+              webkitdirectory=""
+              directory=""
+              multiple
+              onChange={(e) => setFiles(Array.from(e.target.files))}
+              style={{ display: "none" }}
+            />
+            <p style={{ margin: "6px 2px 0", font: "450 11px var(--ui)", color: "var(--fg2)", lineHeight: 1.5 }}>
+              {files.filter(keepUploadFile).length
+                ? `${files.filter(keepUploadFile).length} files selected (node_modules, .git, .venv, build dirs skipped).`
+                : "Pick your agent's folder. Junk dirs and files over 5 MB are skipped."}
+            </p>
+          </div>
+        )}
 
         <div>
           <FieldLabel htmlFor="cmd">Run command (optional)</FieldLabel>
@@ -506,7 +598,7 @@ function ImportPanel() {
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 4 }}>
           <button
             type="submit"
-            disabled={running || !source.trim()}
+            disabled={running || (mode === "path" ? !source.trim() : !files.length)}
             style={{
               background: running ? "var(--bg3)" : "var(--accent)",
               color: running ? "var(--fg2)" : "var(--bg0)",

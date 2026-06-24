@@ -4,6 +4,9 @@
 
 fastapi
 uvicorn[standard]
+# Required by FastAPI's File/Form parameters (multipart upload parsing), used by
+# POST /agents/import/upload.
+python-multipart
 # Capped below 2.11: imported agents run in this container and share its deps;
 # pydantic 2.11 breaks langchain 0.3.x ("ChatOpenAI is not fully defined"),
 # crashing such agents before they make any call (an empty trace). 2.10.x works
