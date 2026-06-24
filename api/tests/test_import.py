@@ -18,7 +18,7 @@ def _seed(run_id, steps=2):
 
 
 def test_import_success(monkeypatch):
-    def fake(run_id, source, ref, subdir, command, env):
+    def fake(run_id, source, ref, subdir, command, env, task=None):
         _seed(run_id, steps=3)
         return subprocess.CompletedProcess([], 0, stdout="ok", stderr="")
     monkeypatch.setattr(_app_module, "_launch_import_run", fake)
@@ -35,7 +35,7 @@ def test_import_requires_source():
 
 
 def test_import_runner_failure_scrubs_and_502(monkeypatch):
-    def fake(run_id, source, ref, subdir, command, env):
+    def fake(run_id, source, ref, subdir, command, env, task=None):
         return subprocess.CompletedProcess([], 1, stdout="", stderr="boom sk-secret")
     monkeypatch.setattr(_app_module, "_launch_import_run", fake)
     resp = client.post("/agents/import",

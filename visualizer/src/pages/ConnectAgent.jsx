@@ -356,7 +356,9 @@ function ImportPanel() {
   const [source, setSource] = useState("");
   const [ref, setRef] = useState("");
   const [command, setCommand] = useState("");
+  const [task, setTask] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [extraEnv, setExtraEnv] = useState("");
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
 
@@ -368,7 +370,20 @@ function ImportPanel() {
       const body = { source };
       if (ref.trim()) body.ref = ref.trim();
       if (command.trim()) body.command = command.trim();
-      if (apiKey.trim()) body.env = { OPENAI_API_KEY: apiKey.trim() };
+      if (task.trim()) body.task = task.trim();
+      const env = {};
+      if (apiKey.trim()) env.OPENAI_API_KEY = apiKey.trim();
+      // Parse extra "KEY=VALUE" lines (e.g. WEATHER_API_KEY=...) for agents that
+      // need more than one key.
+      extraEnv.split("\n").forEach((line) => {
+        const i = line.indexOf("=");
+        if (i > 0) {
+          const k = line.slice(0, i).trim();
+          const v = line.slice(i + 1).trim();
+          if (k) env[k] = v;
+        }
+      });
+      if (Object.keys(env).length) body.env = env;
       const result = await postAgentImport(body);
       navigate(`/runs/${result.run_id}`);
     } catch (err) {
@@ -417,7 +432,7 @@ function ImportPanel() {
 
         <div>
           <FieldLabel htmlFor="ref">Branch / ref (optional)</FieldLabel>
-          <TextInput id="ref" value={ref} onChange={(e) => setRef(e.target.value)} placeholder="main" />
+          <TextInput id="ref" value={ref} onChange={(e) => setRef(e.target.value)} placeholder="leave blank for the default branch" />
         </div>
 
         <div>
@@ -431,6 +446,21 @@ function ImportPanel() {
         </div>
 
         <div>
+          <FieldLabel htmlFor="task">Task / message to send (optional)</FieldLabel>
+          <TextInput
+            id="task"
+            value={task}
+            onChange={(e) => setTask(e.target.value)}
+            placeholder="e.g. what is the weather in London"
+          />
+          <p style={{ margin: "6px 2px 0", font: "450 11px var(--ui)", color: "var(--fg2)", lineHeight: 1.5 }}>
+            For interactive agents (a chat / prompt loop), this is sent as the
+            agent's input so it actually runs and produces a trace. Leave blank
+            for agents that run on their own.
+          </p>
+        </div>
+
+        <div>
           <FieldLabel htmlFor="key">Agent API key (optional)</FieldLabel>
           <TextInput
             id="key"
@@ -439,6 +469,36 @@ function ImportPanel() {
             onChange={(e) => setApiKey(e.target.value)}
             placeholder="sk-..."
           />
+          <p style={{ margin: "6px 2px 0", font: "450 11px var(--ui)", color: "var(--fg2)", lineHeight: 1.5 }}>
+            Sent to the agent as OPENAI_API_KEY.
+          </p>
+        </div>
+
+        <div>
+          <FieldLabel htmlFor="env">Extra environment variables (optional)</FieldLabel>
+          <textarea
+            id="env"
+            value={extraEnv}
+            onChange={(e) => setExtraEnv(e.target.value)}
+            placeholder={"One per line, KEY=VALUE\ne.g. WEATHER_API_KEY=...."}
+            rows={3}
+            spellCheck={false}
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              background: "var(--bg2)",
+              border: "1px solid var(--bd)",
+              borderRadius: 10,
+              padding: "10px 12px",
+              color: "var(--fg0)",
+              font: "450 12.5px var(--mono)",
+              resize: "vertical",
+            }}
+          />
+          <p style={{ margin: "6px 2px 0", font: "450 11px var(--ui)", color: "var(--fg2)", lineHeight: 1.5 }}>
+            For agents that need more than one key (the weather example needs
+            WEATHER_API_KEY too). Never stored; passed to the agent for this run only.
+          </p>
         </div>
 
         {error && <ErrorBanner message={error} />}

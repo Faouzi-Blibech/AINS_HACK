@@ -67,6 +67,16 @@ class Policy:
         return obj
 
 
-def load_policy(path: str | None = None) -> Policy:
+def load_policy(path: str | None = None, *, record_all: bool = False) -> Policy:
+    """Load the recording policy.
+
+    record_all=True clears the host allowlist so every host the agent calls is
+    recorded. Used by the "Import agent" path, where the agent is unknown and we
+    want to capture all of its traffic, not just known LLM endpoints. Redaction
+    and side-effect classification are unchanged.
+    """
     src = Path(path) if path else _DEFAULT
-    return Policy(yaml.safe_load(src.read_text(encoding="utf-8")))
+    cfg = yaml.safe_load(src.read_text(encoding="utf-8"))
+    if record_all:
+        cfg = {**cfg, "record_hosts": []}
+    return Policy(cfg)

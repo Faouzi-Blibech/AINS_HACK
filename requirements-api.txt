@@ -4,7 +4,21 @@
 
 fastapi
 uvicorn[standard]
-pydantic
+# Capped below 2.11: imported agents run in this container and share its deps;
+# pydantic 2.11 breaks langchain 0.3.x ("ChatOpenAI is not fully defined"),
+# crashing such agents before they make any call (an empty trace). 2.10.x works
+# for FastAPI and for langchain-based imported agents.
+pydantic<2.11
 httpx
 python-dotenv
 PyYAML
+# Required by the "Import agent" feature: when no Docker daemon is reachable
+# (e.g. under docker compose) the API records the imported agent in-process via
+# recorder.import_agent.driver, which uses the mitmproxy recording proxy.
+# Versions pinned to ones that ship prebuilt cpython 3.12 wheels: an unpinned
+# resolve pulled an old zstandard that fails to compile on Python 3.12
+# (Py_TYPE is no longer assignable). With these pins pip installs wheels, no
+# C compilation needed.
+mitmproxy==12.2.3
+zstandard==0.25.0
+Brotli==1.2.0

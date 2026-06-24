@@ -15,7 +15,9 @@ import subprocess
 import sys
 import time
 
-from recorder.http_proxy import Recorder
+from pathlib import Path
+
+from recorder.http_proxy import CA_PATH, Recorder
 from recorder.policy import load_policy
 from recorder.record_session import (
     _apply_env, _instrument_sdk, _restore_env, _restore_sdk, _snapshot_env, load_entry,
@@ -24,11 +26,39 @@ from recorder.session import RecordingSession
 from trace_store.store import TraceStore
 
 
+def _agent_subprocess_env(workspace, sdk_tools) -> dict:
+    """Env for the agent subprocess so HTTPS (httpx/requests) trusts the proxy.
+
+    The agent_shim (auto-imported via PYTHONPATH as sitecustomize) only activates
+    its CA trust when CASSETTE_CA points at the proxy CA, and its SDK wrap when
+    CASSETTE_TOOL_MANIFEST is set. rec.env() (already in os.environ here) sets the
+    proxy + SSL_CERT_FILE; this adds the CA + shim so an HTTPS agent captures
+    cleanly without any per-agent setup.
+    """
+    child = dict(os.environ)
+    if CA_PATH.exists():
+        child["CASSETTE_CA"] = str(CA_PATH)
+    shim_dir = str(Path(__file__).resolve().parents[1] / "agent_shim")
+    repo_root = str(Path(__file__).resolve().parents[2])
+    parts = [shim_dir, repo_root]
+    if workspace:
+        parts.append(str(workspace))
+    if child.get("PYTHONPATH"):
+        parts.append(child["PYTHONPATH"])
+    child["PYTHONPATH"] = os.pathsep.join(parts)
+    if sdk_tools:
+        child["CASSETTE_TOOL_MANIFEST"] = json.dumps(sdk_tools)
+    return child
+
+
 def record_imported(*, run_id, store, entry=None, command=None,
-                    sdk_tools=None, env=None, port=8899) -> dict:
+                    sdk_tools=None, env=None, port=8899, workspace=None,
+                    stdin_text=None) -> dict:
     if not entry and not command:
         raise ValueError("record_imported requires either entry or command")
-    policy = load_policy()
+    # Imported agents are unknown, so record every host they call, not just the
+    # known LLM endpoints in the default allowlist.
+    policy = load_policy(record_all=True)
     saved = _snapshot_env()
     session = RecordingSession(mode="record", store=store, run_id=run_id,
                                policy=policy, register_run=False, schema_version="1.1")
@@ -41,7 +71,25 @@ def record_imported(*, run_id, store, entry=None, command=None,
             with session:
                 load_entry(entry)()
         else:
-            subprocess.run(command, env=dict(os.environ))
+            # Feed the task to the agent's stdin so interactive (prompt-loop)
+            # agents run and make recordable calls; then stdin closes (EOF).
+            feed = (stdin_text + "\n") if stdin_text else None
+            proc = subprocess.run(
+                command,
+                env=_agent_subprocess_env(workspace, sdk_tools),
+                cwd=str(workspace) if workspace else None,
+                input=feed,
+                text=True,
+                capture_output=True,
+            )
+            # Surface the agent's own output so a crash (missing key, import
+            # error, etc.) is visible instead of producing a silent empty trace.
+            if proc.stdout:
+                print(proc.stdout, file=sys.stderr)
+            if proc.stderr:
+                print(proc.stderr, file=sys.stderr)
+            if proc.returncode != 0:
+                print(f"[import] agent exited with code {proc.returncode}", file=sys.stderr)
         time.sleep(0.4)
     finally:
         _restore_sdk(originals)
@@ -96,6 +144,7 @@ def main(argv=None) -> int:
         trace = record_imported(
             run_id=args.run_id, store=store, entry=args.entry,
             command=cmd or None, sdk_tools=_parse_manifest(args.manifest), port=args.port,
+            workspace=workspace, stdin_text=os.environ.get("CASSETTE_AGENT_STDIN"),
         )
     except Exception as exc:
         import traceback
@@ -104,7 +153,19 @@ def main(argv=None) -> int:
         return 1
     finally:
         store.close()
-    print(f"run_id={args.run_id} steps={len(trace.get('steps', []))}")
+    steps = len(trace.get("steps", []))
+    print(f"run_id={args.run_id} steps={steps}")
+    if steps == 0:
+        # No captured calls means the agent did not run usefully (crashed, made
+        # no HTTP/LLM/tool calls, or needs a task/keys). Make it a clear failure
+        # instead of a silent empty trace; the agent output was printed above.
+        print(
+            f"ERROR: run_id={args.run_id} recorded 0 steps. The agent made no "
+            "captured calls. If it is interactive, pass a task; if it needs API "
+            "keys or extra env, provide them; see the agent output above.",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

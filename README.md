@@ -18,10 +18,14 @@ To record new traces, add a `GROQ_API_KEY` to `.env` (see `.env.example`).
 ## Import your own agent
 
 Cassette records your own agent without any code change. You give it one input
-(a git URL or a local path) and it does the rest: it clones the repo, runs it in
-an isolated Docker container with the recording proxy and CA wired in
-automatically, and captures the run. There is no manual proxy or certificate
-setup.
+(a git URL or a local path) and it does the rest: it clones the repo, runs it
+with the recording proxy and CA wired in automatically, and captures the run.
+There is no manual proxy or certificate setup.
+
+**Try it in 30 seconds (no key, after `docker compose up`):** open
+**Connect agent** -> **Import**, set the source to `examples/http_agent` and the
+command to `python main.py`, then **Import and record**. A bundled example agent
+makes one HTTPS call so you immediately see a recorded HTTP step.
 
 **In the UI:** open **Connect agent**, use the **Import** panel, paste a git URL
 (or a local path), optionally add a branch, a run command, and the agent's own
@@ -41,10 +45,12 @@ What gets captured:
   in a `cassette.toml` tool manifest (or via the run entry point). The agent's
   source is never modified.
 
-Docker is required (the agent runs in a container). Recordings live under the
-shared store; set `CASSETTE_HOME` (and point `CASSETTE_DB_PATH` /
-`CASSETTE_BLOB_DIR` at it) before `docker compose up` so the API/UI and the
-import container read and write the same store.
+Where the agent runs: if a Docker daemon is reachable (host dev mode), Cassette
+runs the imported agent in an isolated container. Under `docker compose up`
+(where the API container has no Docker daemon) it falls back to recording the
+agent in the API container, so import works from a fresh clone with no extra
+setup. Recordings live under the shared store; set `CASSETTE_HOME` before
+`docker compose up` to relocate it.
 
 > The previous `cassette` CLI (`run` / `enable` / `serve` / `trust`) has been
 > removed; importing and recording is now API-driven (and surfaced in the UI).

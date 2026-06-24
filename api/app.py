@@ -313,6 +313,9 @@ class AgentImportRequest(BaseModel):
     subdir: Optional[str] = None
     command: Optional[str] = None
     env: Optional[dict[str, str]] = None
+    # Sent to the agent's stdin so interactive (chat/prompt-loop) agents actually
+    # run and produce a trace. Ignored by agents that run on their own.
+    task: Optional[str] = None
 
 
 class AgentImportResponse(BaseModel):
@@ -379,11 +382,34 @@ def _launch_hosted_run(
     )
 
 
-def _launch_import_run(run_id, source, ref, subdir, command, env):
-    """Resolve source, ensure the runner image, and run the agent container.
+def _docker_available() -> bool:
+    """True when a Docker daemon is reachable (host dev mode).
 
-    Returns a CompletedProcess. Secret env values are exported into THIS process
-    so the container inherits them by name (never placed on the command line).
+    Under docker compose the API container has no daemon, so this returns False
+    and import falls back to running the driver in this process's container.
+    """
+    import shutil
+
+    if not shutil.which("docker"):
+        return False
+    try:
+        return subprocess.run(
+            ["docker", "info"], capture_output=True, timeout=8
+        ).returncode == 0
+    except Exception:
+        return False
+
+
+def _launch_import_run(run_id, source, ref, subdir, command, env, task=None):
+    """Resolve the source, then record the agent.
+
+    Two paths, auto-selected:
+      * Docker reachable (host dev mode) -> run in an isolated agent-runner container.
+      * No Docker (e.g. under docker compose) -> run the driver as a subprocess in
+        THIS container. The CA trust is wired by the driver so HTTPS agents capture.
+
+    Secret env values are exported into this process so both paths inherit them by
+    name; they are never placed on a command line.
     """
     import shlex
     from recorder import import_agent
@@ -392,18 +418,39 @@ def _launch_import_run(run_id, source, ref, subdir, command, env):
         source, ref=ref, subdir=subdir,
         dest_root=str(Path(DB_PATH).resolve().parent / "imports"),
     )
-    image = import_agent.ensure_image()
     workspace = meta.path if not meta.subdir else str(Path(meta.path) / meta.subdir)
-
     cmd_list = shlex.split(command) if command else None
-    store_home = str(Path(DB_PATH).resolve().parent)
-    argv = import_agent.build_run_argv(
-        image=image, workspace=workspace, store_home=store_home, run_id=run_id,
-        command=cmd_list, env=env,
+
+    # The task is sent to the agent's stdin (CASSETTE_AGENT_STDIN). Bundle it with
+    # the secrets so both the container (-e by name) and the subprocess inherit it.
+    launch_env = dict(env or {})
+    if task:
+        launch_env["CASSETTE_AGENT_STDIN"] = task
+    os.environ.update(launch_env)
+
+    if _docker_available():
+        image = import_agent.ensure_image()
+        store_home = str(Path(DB_PATH).resolve().parent)
+        argv = import_agent.build_run_argv(
+            image=image, workspace=workspace, store_home=store_home, run_id=run_id,
+            command=cmd_list, env=launch_env,
+        )
+        return import_agent.run_container(argv, timeout=_AGENT_RUN_TIMEOUT)
+
+    # Fallback: run the in-container driver directly (no nested Docker).
+    driver_cmd = [
+        sys.executable, "-m", "recorder.import_agent.driver",
+        "--run-id", run_id,
+        "--db", DB_PATH,
+        "--blob-dir", os.environ["CASSETTE_BLOB_DIR"],
+        "--workspace", workspace,
+    ]
+    if cmd_list:
+        driver_cmd += ["--", *cmd_list]
+    return subprocess.run(
+        driver_cmd, capture_output=True, text=True,
+        timeout=_AGENT_RUN_TIMEOUT, env=dict(os.environ),
     )
-    # export secrets so the `-e KEY` flags resolve, then run
-    os.environ.update({k: v for k, v in (env or {}).items()})
-    return import_agent.run_container(argv, timeout=_AGENT_RUN_TIMEOUT)
 
 
 # ---------------------------------------------------------------------------
@@ -1122,28 +1169,43 @@ def agents_import(body: AgentImportRequest) -> AgentImportResponse:
     try:
         proc = _launch_import_run(
             run_id=run_id, source=body.source, ref=body.ref,
-            subdir=body.subdir, command=body.command, env=body.env,
+            subdir=body.subdir, command=body.command, env=body.env, task=body.task,
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    except subprocess.CalledProcessError:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Could not clone '{body.source}'. Check the URL is public and "
+                "the branch exists (leave the branch blank to use the default)."
+            ),
+        )
     except subprocess.TimeoutExpired:
         raise HTTPException(
             status_code=504,
             detail=f"Import exceeded {_AGENT_RUN_TIMEOUT}s; raise CASSETTE_AGENT_RUN_TIMEOUT.",
         )
 
-    if proc.returncode != 0:
+    # Count captured steps first. An interactive agent often exits non-zero after
+    # doing its work (e.g. EOFError once stdin closes), but the calls it made
+    # before that are already recorded, so a trace with steps is still a success.
+    try:
+        run = store.get_run(run_id)
+        steps = len(run.get("steps", []))
+    except KeyError:
+        steps = 0
+
+    if steps == 0 and proc.returncode != 0:
         combined = (proc.stderr or "") + (proc.stdout or "")
         secret = " ".join((body.env or {}).values())
         scrubbed = _scrub_subprocess_output(combined, secret, body.source)
         detail = scrubbed or f"Import runner exited with code {proc.returncode}."
-        print(f"[agents/import] runner failed (code {proc.returncode})")
+        # Log the actual agent error to the API logs (docker compose logs) so it
+        # is visible without digging into the HTTP response.
+        print(f"[agents/import] runner failed (code {proc.returncode}):\n{detail}")
         raise HTTPException(status_code=502, detail=detail)
 
-    try:
-        steps = len(store.get_run(run_id).get("steps", []))
-    except KeyError:
-        steps = 0
     return AgentImportResponse(run_id=run_id, status="ok", steps=steps)
 
 
