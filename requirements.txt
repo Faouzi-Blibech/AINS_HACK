@@ -5,6 +5,7 @@
 fastapi
 uvicorn[standard]
 pydantic
+python-multipart      # required by FastAPI File/Form parsing (POST /agents/import/upload)
 
 # --- Agent + LLM ---
 # AI layer calls Groq's OpenAI-compatible API directly over httpx (see ai_agents/llm.py)

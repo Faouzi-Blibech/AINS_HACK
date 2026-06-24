@@ -4,8 +4,8 @@
 export default function RootCausePanel({ blame, metrics }) {
   if (!blame) return null;
 
-  // No failure detected case
-  if (blame.root_cause_step_id == null) {
+  // No failure detected case: only when nothing failed at all.
+  if (blame.failed_step_id == null) {
     return (
       <div
         id="root-cause-panel"
@@ -90,10 +90,19 @@ export default function RootCausePanel({ blame, metrics }) {
           <span style={{ color: "var(--root)" }}>{blame.failed_step_id}</span>
           {" "}is{" "}
           <span style={{ color: "var(--root)" }}>where it failed.</span>
-          {" "}Step&nbsp;
-          <span style={{ color: "var(--root)" }}>{blame.root_cause_step_id}</span>
-          {" "}is{" "}
-          <span style={{ color: "var(--root)" }}>why.</span>
+          {blame.root_cause_step_id != null ? (
+            <>
+              {" "}Step&nbsp;
+              <span style={{ color: "var(--root)" }}>{blame.root_cause_step_id}</span>
+              {" "}is{" "}
+              <span style={{ color: "var(--root)" }}>why.</span>
+            </>
+          ) : (
+            <>
+              {" "}
+              <span style={{ color: "var(--root)" }}>No single upstream cause.</span>
+            </>
+          )}
         </div>
         {blame.verdict && (
           <div
