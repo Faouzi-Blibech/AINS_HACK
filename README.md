@@ -8,19 +8,6 @@ Working prototype: import and record any agent, deterministic replay, a Temporal
 
 ---
 
-## Final submission deliverables
-
-| Deliverable | Where |
-|---|---|
-| Source code + this README + setup | this repository |
-| Architecture diagram (components, data flow, AI pipeline) | [`docs/architecture.md`](docs/architecture.md) + [`docs/images/`](docs/images/) |
-| Data description (sources, formats, key fields, quality, sensitivity) | [`docs/data_description.md`](docs/data_description.md) |
-| Evaluation report (metrics, protocol, results, caveats) | [`docs/evaluation_report.md`](docs/evaluation_report.md) |
-| Explainability layer | in-product (see [Explainability](#7-explainability-layer)) |
-| Demo script | [`docs/demo_scenario.md`](docs/demo_scenario.md) |
-| Pitch deck and demo video | submitted separately |
-
----
 
 ## Quickstart
 
